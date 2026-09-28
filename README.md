@@ -9,18 +9,26 @@
 >   を `svc.cmd` 1 コマンドで起停
 > - JDK 8 / 17 / 21 を `use-jdk` で**ウィンドウ単位**に切替（`JAVA_HOME` は汚さない）
 > - 各プロジェクトの起動手順・ハマりどころを **2,400 行超のドキュメント**に記録
-> - E2E 検証スクリプト 7 本（Python）
+> - E2E 検証スクリプト 8 本（Python）
+> - さらに **自作の Spring Boot 製 REST API**（[exam-tracker](https://github.com/wpc725562-dotcom/exam-tracker)）
+>   —— 単体テスト 217 件、E2E 検証 86 項目、すべてパス
 >
 > **English summary**: A portable, zero-system-pollution development workspace that lets
 > three mutually incompatible Spring Boot generations (2.7 / 3.4 / 3.5) coexist on one
 > Windows host — portable JDKs, script-managed middleware, 2,400+ lines of runbooks,
-> and 7 end-to-end verification scripts.
+> 8 end-to-end verification scripts, plus a **from-scratch Spring Boot REST API**
+> ([exam-tracker](https://github.com/wpc725562-dotcom/exam-tracker)) with 217 unit tests
+> and 86 passing end-to-end assertions.
 
 > 建立于 2026-09-28。目的：把 P0–P3 四个阶段的项目**隔离**在一个工作区里，共用一套中间件，
 > 但**互不干扰**（各自的 JDK、各自的依赖、各自的数据库 schema、各自的端口）。
 >
 > 关键约束：**不改动系统环境**。所有 JDK 走便携版，所有中间件走「解压即用」的便携版。
 > 删掉 `D:\java-workspace` 就等于完全回滚，系统里不留任何痕迹。
+>
+> **本工作区自己写的项目**（不属于 P0–P3 的克隆）：**[exam-tracker](https://github.com/wpc725562-dotcom/exam-tracker)**
+> —— 备考任务追踪 API，Spring Boot 3.5 / Java 17 / JWT / MySQL，
+> 22 个接口、217 个单元测试、86 项端到端断言。它**单独发了一个仓库**，见第 0 节。
 
 ---
 
@@ -28,20 +36,29 @@
 
 **是什么**：一套**自研的环境工程工具链**。脚本、文档、验证工具全部原创。
 
-**不是什么**：**不包含任何第三方项目源码。**
-P0 / P1 / P2 三个学习项目都是上游开源仓库的浅克隆，各自是独立仓库、origin 指向上游，
-已被 `.gitignore` 排除，不在本仓库里。想跑起来按 `docs/run-pX.md` 里的地址自己 clone。
+**不是什么**：**不包含任何第三方项目源码，也不包含 P4 的源码。**
+P0 / P1 / P2 三个学习项目是上游开源仓库的浅克隆（各自独立仓库、origin 指向上游，已被 `.gitignore` 排除）；
+P4 `exam-tracker` 是**本工作区原创**的，但它**单独发了一个仓库**，所以这里同样排除 ——
+本仓库只放「让这些东西能跑起来」的脚本、文档与验证工具。
 
-| 阶段 | 上游项目 | 本仓库提供的是 |
-|---|---|---|
-| P0 | [elunez/eladmin-mp](https://github.com/elunez/eladmin-mp) | 启动手册 + 配置修复 + 登录验证脚本 |
-| P1 | [liyupi/yu-ai-agent](https://github.com/liyupi/yu-ai-agent) | 启动手册 + 本地 Ollama 离线化方案 + 24 项 E2E 验证 |
-| P2 | [macrozheng/mall-swarm](https://github.com/macrozheng/mall-swarm) | 启动手册 + 配置批量修复 + Nacos 配置发布 + E2E 验证 |
+| 阶段 | 项目 | 性质 | 本仓库提供的是 |
+|---|---|---|---|
+| P0 | [elunez/eladmin-mp](https://github.com/elunez/eladmin-mp) | 上游克隆 | 启动手册 + 配置修复 + 登录验证脚本 |
+| P1 | [liyupi/yu-ai-agent](https://github.com/liyupi/yu-ai-agent) | 上游克隆 | 启动手册 + 本地 Ollama 离线化方案 + 24 项 E2E 验证 |
+| P2 | [macrozheng/mall-swarm](https://github.com/macrozheng/mall-swarm) | 上游克隆 | 启动手册 + 配置批量修复 + Nacos 配置发布 + E2E 验证 |
+| **P4** | **[wpc725562-dotcom/exam-tracker](https://github.com/wpc725562-dotcom/exam-tracker)** | **★ 本工作区原创** | 只在本仓库登记端口与库；**源码请去它自己的仓库看** |
 
-> 之所以不把它们并进来：一是版权（那是别人的代码），二是技术上也做不到
+> 之所以不把 P0–P2 并进来：一是版权（那是别人的代码），二是技术上也做不到
 > —— 见第 1 节的 `javax` / `jakarta` 硬墙。
+>
+> P4 是原创，为什么也不放进来？因为**埋在子目录里没人会点进去**。
+> 它需要一个能被一眼看到的仓库地址，才能填上「Java + Spring 后端」那一栏。
 
-**内容规模**：脚本 2,200+ 行、文档 2,400+ 行、验证工具 1,400+ 行，合计 **6,000 行左右**。
+**内容规模**：脚本 2,200+ 行、文档 2,500+ 行、验证工具 2,100+ 行，合计 **6,800 行左右**
+（不含 P4 的 7,600 行）。
+
+**P4 单独统计**：50 个主源文件 / 3,848 行 + 16 个测试文件 / 3,808 行 = **7,656 行**，
+217 个单元测试、86 项端到端断言，全部实测通过。
 
 ---
 
@@ -119,10 +136,15 @@ java-workspace\
 ├── p0-eladmin-mp\               ← 【不进本仓库】P0：Spring Boot 单体（Java 8 / Boot 2.7 / javax）
 ├── p1-yu-ai-agent\              ← 【不进本仓库】P1：Java + AI（Java 21 / Boot 3.4 / jakarta）
 ├── p2-mall-swarm\               ← 【不进本仓库】P2：微服务（Java 17 / Boot 3.5 / jakarta）
-└── p3-seckill\                  ← P3：计划中（见 p3-seckill/README-为何先空着.md）
+├── p3-seckill\                  ← P3：计划中（见 p3-seckill/README-为何先空着.md）
+└── p4-exam-tracker\             ← 【不进本仓库】★ 本工作区原创：备考任务追踪 API
+                                    （Spring Boot 3.5 / Java 17 / JWT / MySQL）
+                                    自己的仓库：https://github.com/wpc725562-dotcom/exam-tracker
+                                    端口 8090、库 exam_tracker（MySQL 3308）
 ```
 
-**每个 `pX-*` 目录都是独立的 git 仓库**（克隆进来的第三方项目自带 `.git`），
+**每个 `pX-*` 目录都是独立的 git 仓库**（克隆进来的第三方项目自带 `.git`；
+`p4-exam-tracker` 也有自己的 `.git`，origin 指向它自己的 GitHub 仓库），
 它们被本仓库的 `.gitignore` 排除，**不参与本仓库的版本控制**。
 不要把它们改成 submodule —— 保持彼此独立，各自 `git pull` 升级上游。
 
@@ -332,7 +354,16 @@ python tools/p1-e2e-test.py
 
 # P2：全链路（网关 → auth → Feign → admin → MySQL → Redis）
 python tools/p2-e2e-test.py
+
+# P4（本工作区原创项目）：86 项断言，脚本在它自己的仓库里
+cd /d/java-workspace/p4-exam-tracker
+python tools/p4-e2e-test.py
 ```
+
+P4 的 86 项断言分 9 组：探针/文档、注册登录、**未认证 → JSON 401**、任务 CRUD 与通配符转义、
+打卡（科目从任务推导 / 未来日期拒绝）、统计（连续天数 / 倒计时 / 窗口折算）、
+**数据隔离（B 用户对 A 的数据全部 404）**、删除保护（409 → `force=true`）、日志体检。
+实测结果：**86/86 PASS**。
 
 设计原则写在脚本的 docstring 里，核心是两条：
 
