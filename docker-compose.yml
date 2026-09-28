@@ -1,0 +1,340 @@
+# =============================================================================
+#  java-workspace 中间件编排
+#  ---------------------------------------------------------------------------
+#  设计原则：
+#   1. 只绑定 127.0.0.1 —— 不暴露到局域网，弱口令也不会变成风险。
+#   2. 用 profiles 分组 —— 默认只起 core 三个，别一上来就把 8 个容器全拉起来。
+#   3. 所有数据放命名卷 —— `docker compose down -v` 即可完全重置。
+#   4. 全部配 healthcheck —— 用 `docker compose ps` 看 STATUS 就知道能不能连。
+#
+#  常用命令：
+#    docker compose up -d                        # core：mysql57 + mysql8 + redis
+#    docker compose --profile ai up -d           # + qdrant
+#    docker compose --profile swarm up -d        # + nacos/mongo/es/rabbitmq/minio（约 4 GB 内存）
+#    docker compose --profile ui up -d           # + phpmyadmin/redis-insight
+#    docker compose ps                           # 看健康状态
+#    docker compose logs -f mysql8               # 看某个服务日志
+#    docker compose down                         # 停（数据保留）
+#    docker compose down -v                      # 停 + 清数据
+# =============================================================================
+
+name: java-workspace
+
+# -----------------------------------------------------------------------------
+#  YAML 锚点：把重复的片段抽出来，改一处就全改
+# -----------------------------------------------------------------------------
+x-mysql-common: &mysql-common
+  restart: unless-stopped
+  environment:
+    TZ: Asia/Shanghai
+  volumes:
+    # 只在「数据卷为空」的第一次启动时执行，用于自动建库。
+    # 之后再改这个文件不会生效 —— 要生效得 `docker compose down -v` 重来。
+    #
+    # 注意路径是 ./sql 而不是 ./docker/mysql/init：
+    # 同一个 01-schemas.sql 也被便携版（svc.cmd init）用，放在 sql/ 下保持单一事实来源，
+    # 免得改了一处忘了另一处。
+    - ./sql:/docker-entrypoint-initdb.d:ro
+
+services:
+
+  # ===========================================================================
+  #  core —— 所有阶段都要用
+  # ===========================================================================
+
+  # ---- MySQL 5.7：给 P0 eladmin-mp（Java 1.8 / Spring Boot 2.7 时代） ----
+  # 为什么单独给一个 5.7：MySQL 8 里 rank / groups / system / window 是保留字，
+  # 老项目的建表 SQL 常有裸用这些词做列名的，在 8.0 上会直接报语法错误。
+  mysql57:
+    <<: *mysql-common
+    image: mysql:5.7
+    container_name: jw-mysql57
+    profiles: ["core"]
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+      - --lower-case-table-names=1
+      # 放宽 sql_mode：老项目常有 datetime 默认值 '0000-00-00' 之类的写法
+      - --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+      - --max_connections=500
+      - --innodb-buffer-pool-size=256M
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: eladmin
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql57-data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -uroot -p123456 -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+
+  # ---- MySQL 8.0：给 P1 / P2 / P3 ----
+  mysql8:
+    <<: *mysql-common
+    image: mysql:8.0
+    container_name: jw-mysql8
+    profiles: ["core"]
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+      - --lower-case-table-names=1
+      # 强制用老认证插件：否则老版本 JDBC 驱动会报
+      #   Unable to load authentication plugin 'caching_sha2_password'
+      - --default-authentication-plugin=mysql_native_password
+      - --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+      - --max_connections=500
+      - --innodb-buffer-pool-size=512M
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: mall
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:3308:3306"
+    volumes:
+      - mysql8-data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -uroot -p123456 -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+
+  # ---- Redis：按 DB 隔离各项目，不必开多个实例 ----
+  # DB1 eladmin / DB2 mall / DB3 yu_ai_agent / DB4 seckill
+  # 连接后在客户端里 `SELECT 2` 即可切换；Spring 配置里写 `database: 2`。
+  redis:
+    image: redis:7-alpine
+    container_name: jw-redis
+    profiles: ["core"]
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --timeout
+      - "0"
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ===========================================================================
+  #  ai —— P1 做向量检索时才需要
+  # ===========================================================================
+
+  # yu-ai-agent 里的 RAG 部分需要一个向量库。
+  # Qdrant 比 PgVector / Milvus 轻得多，单容器起来就能用，带 Web UI。
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: jw-qdrant
+    profiles: ["ai"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"   # HTTP API + Web UI（浏览器直接开 /dashboard）
+      - "127.0.0.1:6334:6334"   # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      # qdrant 镜像里没有 curl，但镜像是基于 debian，有 bash 的 /dev/tcp 可用
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # ===========================================================================
+  #  swarm —— P2 mall-swarm 全家桶（吃内存，约 4 GB，按需再起）
+  # ===========================================================================
+
+  # 注册中心 + 配置中心。standalone 模式用内嵌 Derby 存配置，不用额外接 MySQL。
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: jw-nacos
+    profiles: ["swarm"]
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      PREFER_HOST_MODE: hostname
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+      JVM_XMN: 128m
+      NACOS_AUTH_ENABLE: "false"   # 本地开发关掉鉴权，省得每个模块都要配 token
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:8848:8848"   # 控制台 http://127.0.0.1:8848/nacos
+      - "127.0.0.1:9848:9848"   # gRPC（2.x 客户端必须能连，否则注册失败）
+    volumes:
+      - nacos-data:/home/nacos/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8848/nacos/v1/console/health/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # mall-swarm 的商品详情走文档存储
+  mongodb:
+    image: mongo:5.0
+    container_name: jw-mongodb
+    profiles: ["swarm"]
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: "123456"
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ping:1}).ok' -u root -p 123456 --authenticationDatabase admin || exit 1"]
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 30s
+
+  # 商品搜索。mall-swarm 用 7.x 的 API，别升到 8。
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.18
+    container_name: jw-elasticsearch
+    profiles: ["swarm"]
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      bootstrap.memory_lock: "true"
+      TZ: Asia/Shanghai
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "127.0.0.1:9200:9200"
+      - "127.0.0.1:9300:9300"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # 订单超时取消走延迟队列
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: jw-rabbitmq
+    profiles: ["swarm"]
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: "123456"
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:5672:5672"     # AMQP
+      - "127.0.0.1:15672:15672"   # 管理台 http://127.0.0.1:15672  (admin/123456)
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 40s
+
+  # 对象存储，存商品图片
+  minio:
+    image: minio/minio:latest
+    container_name: jw-minio
+    profiles: ["swarm"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # 控制台 http://127.0.0.1:9001  (minioadmin/minioadmin)
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  # ===========================================================================
+  #  ui —— 图形化查看数据（可选，纯方便）
+  # ===========================================================================
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: jw-phpmyadmin
+    profiles: ["ui"]
+    restart: unless-stopped
+    environment:
+      # ARBITRARY=1 → 登录页可以手填服务器地址，一个界面同时管 3307 和 3308
+      PMA_ARBITRARY: "1"
+      UPLOAD_LIMIT: 300M
+      TZ: Asia/Shanghai
+    ports:
+      # 故意避开 8080–8401：那段是 mall-swarm 的地盘（8081 是 mall-search），
+      # 用 8081 会在 P2 阶段和 mall-search 撞车。
+      - "127.0.0.1:18080:80"   # http://127.0.0.1:18080  服务器填 host.docker.internal:3307 或 :3308
+    depends_on:
+      mysql57:
+        condition: service_healthy
+
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: jw-redis-insight
+    profiles: ["ui"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5540:5540"   # http://127.0.0.1:5540  连 host.docker.internal:6380
+    volumes:
+      - redis-insight-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+# =============================================================================
+#  命名卷 —— `docker compose down -v` 会把它们全删掉，数据一并清空
+# =============================================================================
+volumes:
+  mysql57-data:
+  mysql8-data:
+  redis-data:
+  qdrant-data:
+  nacos-data:
+  mongo-data:
+  es-data:
+  rabbitmq-data:
+  minio-data:
+  redis-insight-data:

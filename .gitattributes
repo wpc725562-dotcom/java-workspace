@@ -1,0 +1,19 @@
+# 统一换行符，避免 Windows / Linux 之间来回转换产生整文件 diff 噪声。
+# 不写这个的话，git 会把 CRLF 和 LF 当成不同的行，改一个字符也会显示成"整个文件都变了"。
+* text=auto eol=lf
+
+# 明确二进制，别让 git 去碰它们
+*.zip   binary
+*.jar   binary
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+
+# Windows 批处理必须是 CRLF，否则某些情况下 cmd 解析会出问题
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# 这些文件在 diff / 语言统计里没有意义
+*.sql   text eol=lf

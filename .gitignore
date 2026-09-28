@@ -1,0 +1,59 @@
+# ---- 四个学习项目本体：都是上游开源项目的浅克隆，不属于本仓库 ----
+# 它们各自是独立的 git 仓库（自带 .git，origin 指向上游）。
+# 本仓库只放「工作区自己的东西」：启停脚本、JDK 切换、文档、验证工具。
+# 想跑起来就按 docs/run-pX.md 里的地址自己 clone。
+p0-eladmin-mp/
+p1-yu-ai-agent/
+p2-mall-swarm/
+# p3-seckill/ 不排除 —— 它里面只有一份「为什么先空着」的说明，是本仓库的内容
+
+# ---- 便携版 JDK：几百 MB，绝对不要进版本库 ----
+.jdks/
+_dl/
+
+# ---- 便携版 MySQL / Redis 运行时 + 数据目录 ----
+# 加起来约 3 GB（两个 MySQL 解压后各 1.5 GB），而且里面是二进制，进 git 毫无意义。
+# 数据目录更要排除：里面是真实数据，而且 mysqld 会写一堆内部文件。
+.runtime/
+
+# ---- 中间件数据 ----
+docker/data/
+*.pid
+
+# ---- Java 构建产物 ----
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+!**/wrapper/maven-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.jar
+
+# ---- IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+
+# ---- 日志与临时文件 ----
+logs/
+*.log
+*.tmp
+*.bak
+*.orig
+
+# ---- 系统垃圾 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 本地覆盖配置：敏感信息（真实密码 / 密钥）放这里，不要提交 ----
+*-local.yml
+*-local.yaml
+*-local.properties
+application-local.yml
+.env
+.env.local
