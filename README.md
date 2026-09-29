@@ -61,8 +61,8 @@ P4 `exam-tracker` 是**本工作区原创**的，但它**单独发了一个仓�
 > P4 是原创，为什么也不放进来？因为**埋在子目录里没人会点进去**。
 > 它需要一个能被一眼看到的仓库地址，才能填上「Java + Spring 后端」那一栏。
 
-**内容规模**：脚本 1,900 行、文档 3,300 行、验证工具 1,400 行、项目工作台 3,200 行，
-合计 **约 9,800 行**（不含 P4 的 11,500 行）。
+**内容规模**：脚本 1,900 行、文档 3,300 行、验证工具 1,400 行、项目工作台 3,900 行，
+合计 **约 10,500 行**（不含 P4 的 11,500 行）。
 
 **P4 单独统计**：60 个主源文件 / 5,270 行 + 23 个测试文件 / 6,311 行 = **11,581 行**，
 309 个单元测试、35 个集成测试、86 项端到端断言，全部实测通过（CI 上同样全绿）。
@@ -132,9 +132,10 @@ java-workspace\
 │   └── run-p2.md                ← P2 mall-swarm 启动手册
 │
 ├── dashboard\                   ← ★ 本工作区自研：项目工作台（见第 10 节）
-│   ├── README.md                ← 用法 + 加新项目 + 设计上踩过的 8 个坑
+│   ├── README.md                ← 用法 + 加新项目 + 设计上踩过的 12 个坑
 │   ├── projects.json            ← 声明式项目清单：加项目只改这个文件
 │   ├── server.py                ← 零依赖本地服务（标准库 http.server）
+│   ├── start.cmd / stop.cmd     ← 一键启动 / 按端口停止（纯 ASCII + CRLF）
 │   ├── verify-ui.js             ← 真浏览器 55 项界面断言 + 三断点截图
 │   └── web\                     ← index.html / style.css / app.js（无框架无构建）
 │
@@ -400,6 +401,11 @@ P4 的 86 项断言分 9 组：探针/文档、注册登录、**未认证 → JS
 
 工作台把这些收进一份声明式清单，并且真的能替你把步骤跑完。
 
+**双击 `dashboard\start.cmd`** 就能用 —— 它自己找 Python、起服务、把控制台落到日志里；
+已经在跑的时候再点一次，只把浏览器打开，不会起第二个实例。停止用 `dashboard\stop.cmd`（幂等）。
+
+也可以直接跑服务：
+
 ```bash
 cd /d/java-workspace
 python dashboard/server.py        # 打开 http://127.0.0.1:8990/
@@ -439,4 +445,16 @@ python dashboard/server.py        # 打开 http://127.0.0.1:8990/
 2. **`svc.sh start` 只接受一个 target**（`svc.cmd` 里是 `set "TARGET=%~2"`）。
    写成 `svc.sh start mysql57 redis` 只会起 mysql57，第二个被**静默忽略**，退出码还是 0。
 
-完整的设计说明、以及 8 个踩过的坑（含复现方式）写在 [`dashboard/README.md`](dashboard/README.md)。
+### ⚠️ 两个「只在双击启动时才犯」的错（已修）
+
+工作台从 WorkBuddy 的 bash 里启动时一切正常，**双击 `start.cmd` 时却完全起不来**。
+两个原因都属于「测试环境比用户环境更宽容」，细节见 [`dashboard/README.md`](dashboard/README.md) 第 6.9 / 6.10 节：
+
+1. **`print()` 在 GBK 的 stdout 上会抛 `UnicodeEncodeError`**。bash 注入了 `PYTHONUTF8=1`，
+   所以测不出来；双击启动走 PowerShell → cmd，编码是 GBK，日志里的 `❌` 和 U+FFFD 直接
+   把线程打死，前端永远停在「启动中」。
+2. **`shutil.which("bash")` 命中 `C:\Windows\System32\bash.exe`** —— 那不是 bash，
+   是 WSL 的启动器。普通 PATH 里它排在 Git 的 bash 前面，于是所有中间件都起不来，
+   报的还是 UTF-16 编码的 `HCS_E_HYPERV_NOT_INSTALLED`（读出来是一片乱码）。
+
+完整的设计说明、以及 12 个踩过的坑（含复现方式）写在 [`dashboard/README.md`](dashboard/README.md)。

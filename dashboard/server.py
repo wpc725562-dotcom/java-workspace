@@ -82,6 +82,69 @@ CREATE_NEW_PROCESS_GROUP = 0x00000200
 POISON_ENV = ("SERVER__PORT", "SERVER__HOST", "SERVER_PORT")
 
 
+# ---------------------------------------------------------------------------
+# ★ 先把标准输出的编码钉死，否则 print() 会炸
+# ---------------------------------------------------------------------------
+# 中文 Windows 上，stdout 一旦被重定向到文件，Python 用的就是 locale 编码（GBK），
+# 不是 UTF-8。于是任何 GBK 表达不了的字符都会让 print() 抛 UnicodeEncodeError：
+#
+#     UnicodeEncodeError: 'gbk' codec can't encode character '\u274c'
+#
+# 实测踩到过两次，而且**两次都崩在异常处理里面**：
+#   start_middleware 打印子进程输出时炸 → job_start 的 except 想补一条
+#   「❌ 启动失败：…」又炸 → 线程静默死亡 → 前端永远停在「启动中」，日志里
+#   只剩一段 traceback，看不出是哪一步失败的。
+#
+# 触发它的字符有两类，都很容易碰到：
+#   ① 日志文案里的 ❌ ✗ 这类符号；
+#   ② U+FFFD —— 把 GBK 字节按 UTF-8 解码时会成片产生，而它同样编不进 GBK。
+#      也就是说「解码选错了编码」最后表现为「打印崩溃」，因果隔了一层，
+#      排查时很容易往错误的方向找。
+#
+# 所以两个方向都要钉死：读子进程一律走 decode_console()，
+# 写出统一 UTF-8 + errors="replace"。
+def _force_utf8_stdio():
+    """把 stdout/stderr 切成 UTF-8 + errors='replace'，让 print() 永不因编码抛异常。
+
+    顺带打开 line_buffering。这不是性能调优，是正确性：stdout 一旦被重定向到
+    文件（start.cmd 就是这么干的），Python 默认按 8KB 块缓冲，于是启动 banner
+    会一直卡在缓冲区里 —— `tail` 看不到任何东西，而进程被 taskkill 杀掉时那块
+    缓冲直接丢掉，日志里连「它到底起没起来」都查不到。实测踩到过：端口已经在
+    监听了，日志还是 0 字节。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        except (AttributeError, ValueError, OSError):
+            pass  # 流被换成了非文本对象（例如 pythonw 下 stdout 是 None）—— 跳过
+
+
+_force_utf8_stdio()
+
+
+def decode_console(raw: bytes) -> str:
+    """解码 Windows 控制台程序（svc.cmd / bash / netstat）的输出。
+
+    不能一律按 UTF-8 解：中文 Windows 上 cmd 系的输出是 GBK/CP936 字节，
+    按 UTF-8 解会得到满屏 U+FFFD，中文全丢 —— 而且这些 U+FFFD 还会把后面的
+    print 一起炸掉（见上面那段注释）。
+
+    也不能一律按 GBK 解：工作区里不少脚本自己设了 UTF-8（JAVA_TOOL_OPTIONS
+    那一套），它们的输出是合法 UTF-8，按 GBK 解会变成乱码。
+
+    所以：先严格试 UTF-8，失败再严格试 GBK，都失败才 replace。
+    纯 ASCII 时两种都能解且结果相同，顺序无影响。
+    """
+    if not raw:
+        return ""
+    for enc in ("utf-8", "gbk"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", "replace")
+
+
 def log(*a):
     print("[dashboard]", *a, flush=True)
 
@@ -98,6 +161,37 @@ def win2unix(p: str) -> str:
     return p
 
 
+def _is_wsl_bash(path) -> bool:
+    """判断一个 bash.exe 是 WSL 的启动器，而不是 Git Bash。
+
+    ★ 为什么必须把它排掉 —— 这是整个工作台里最阴的一个坑：
+
+      Windows 在 System32 里放了一个 bash.exe，那不是 bash，是 WSL 的启动器；
+      真正的 Linux bash 跑在一个 Hyper-V 虚拟机里。而工作区的脚本是**给 Git Bash
+      写的**（用 cygpath、用 /d/ 这种盘符路径），交给 WSL 只有两个结果：
+
+        · 报 HCS_E_HYPERV_NOT_INSTALLED（没开 Hyper-V 时就是这句），而且
+        · WSL 的输出是 UTF-16，按单字节读出来是一片
+          「B a s h / S e r v i c e / C r e a t e I n s t a n c e /...」的乱码，
+          看不出到底是谁在报错、在报什么错。
+
+      它只在**从普通 Windows 命令行启动**时才踩得到：
+
+        · 从 WorkBuddy 的 bash 里启动 → PATH 上第一个 bash 就是 Git Bash → 正常
+        · 双击 dashboard\\start.cmd 启动 → PATH 上没有 Git Bash 时，
+          shutil.which("bash") 就命中 System32 里那个 WSL 启动器 → 全线失败
+
+      也就是说：开发时怎么试都是好的，用户一用就坏。实测踩到过 ——
+      从 bash 启动时 P0/P4 都能起来，从 start.cmd 启动时连 MySQL 都拉不起来。
+    """
+    if not path:
+        return False
+    p = os.path.normcase(os.path.abspath(path))
+    win = os.path.normcase(os.environ.get("SystemRoot", r"C:\Windows"))
+    # System32\bash.exe（WSL 启动器）以及 WindowsApps 里那个别名
+    return p.startswith(win + os.sep) or "windowsapps" in p
+
+
 def find_bash() -> str:
     cands = [
         shutil.which("bash"),
@@ -106,9 +200,13 @@ def find_bash() -> str:
         os.path.expanduser(r"~\AppData\Local\Programs\Git\bin\bash.exe"),
     ]
     for c in cands:
-        if c and os.path.isfile(c):
+        if c and os.path.isfile(c) and not _is_wsl_bash(c):
             return c
-    raise RuntimeError("找不到 bash —— 工作区的脚本都是 bash 写的，必须先装 Git for Windows")
+    raise RuntimeError(
+        "找不到可用的 Git Bash —— 工作区的脚本都是 bash 写的，必须先装 Git for Windows。"
+        "（注意 C:\\Windows\\System32\\bash.exe 是 WSL 的启动器，不是 Git Bash，"
+        "工作台的脚本不能用它跑）"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +520,9 @@ def svc_run(args, timeout=240):
     bash = find_bash()
     p = subprocess.run([bash, "svc.sh"] + list(args), cwd=str(WS),
                        capture_output=True, timeout=timeout)
-    out = (p.stdout or b"").decode("utf-8", "replace") + (p.stderr or b"").decode("utf-8", "replace")
+    # ★ 用 decode_console，不要写死 "utf-8"：svc.cmd 在中文 Windows 上吐的是
+    #   GBK 字节，按 UTF-8 解会变成 U+FFFD —— 中文全丢，而且会让后面的 print 炸掉。
+    out = decode_console(p.stdout or b"") + decode_console(p.stderr or b"")
     return p.returncode, out.strip()
 
 
@@ -716,7 +816,7 @@ def job_stop(pid):
             bash = find_bash()
             p = subprocess.run([bash, L["script"]] + L["stopArgs"], cwd=str(WS),
                                capture_output=True, timeout=180)
-            txt = (p.stdout or b"").decode("utf-8", "replace")
+            txt = decode_console(p.stdout or b"")
             for line in txt.splitlines()[-15:]:
                 RT.say(pid, "  " + line.strip())
             RT.say(pid, f"退出码 {p.returncode}")

@@ -2,6 +2,18 @@
 
 把 P0–P4 五个项目集中到一个页面里：**看状态、按条件筛、一键启停、一键打开**。
 
+**双击 `dashboard\start.cmd` 就行** —— 它自己找 Python、起服务、把控制台落到日志里。
+已经在跑的时候再点一次，它只把浏览器打开，**不会起第二个实例**。
+
+```cmd
+dashboard\start.cmd                 :: 默认 8990
+dashboard\start.cmd 8991            :: 换端口（日志也跟着分文件）
+dashboard\stop.cmd                  :: 停止；幂等，没在跑也返回 0
+dashboard\stop.cmd 8991             :: 只停 8991 那个
+```
+
+也可以直接跑服务：
+
 ```bash
 cd /d/java-workspace
 python dashboard/server.py          # 打开 http://127.0.0.1:8990/
@@ -38,10 +50,16 @@ dashboard/
 │   ├── index.html
 │   ├── style.css     深浅色 + 响应式，无 CSS 框架
 │   └── app.js        无框架、无构建步骤
-└── verify-ui.js      用真浏览器跑 55 项界面断言
+├── verify-ui.js      用真浏览器跑 55 项界面断言
+├── start.cmd         一键启动：找 Python / 起服务 / 落日志 / 已运行就只开浏览器
+└── stop.cmd          按端口停止，幂等
 ```
 
-合计约 3,200 行，其中 `server.py` 1,244 行、`projects.json` 243 行、前端 1,412 行。
+两个 `.cmd` 只做编排，逻辑都在 `server.py` 里。它们遵守工作区约定：
+**纯 ASCII + CRLF**（cmd 按 OEM 代码页读 UTF-8 文件会乱码，REM 行上的乱码还可能被当命令执行）。
+
+合计约 3,900 行，其中 `server.py` 1,344 行、`projects.json` 243 行、前端 1,412 行、
+两个启动器 231 行、`verify-ui.js` 317 行。
 
 **没有第三方依赖，是有意为之**：这个工作区从头到尾的卖点是「删掉 `D:\java-workspace` 就等于完全回滚」。
 引入 Flask 或 Vite 就等于引入一个 `pip install` / `npm install` 步骤，
@@ -158,7 +176,14 @@ NODE_PATH="C:/Users/Administrator/.workbuddy-ai/binaries/node/workspace/node_mod
 
 ---
 
-## 6. 设计上踩过的坑（都不是猜的）
+## 6. 设计上踩过的坑（12 条，都不是猜的）
+
+> **6.9–6.12 是同一批发现的，值得单独说一句。**
+> 它们只在**从普通 Windows 命令行启动**时才出现：WorkBuddy 的 bash 会注入
+> `PYTHONUTF8=1`、并把 Git Bash 排在 PATH 前面，于是从 bash 里怎么测都是绿的 ——
+> 直到按真实用户的方式（双击 `start.cmd`）跑了一遍，才发现工作台对用户根本不可用。
+> **「在我这儿是好的」和「在用户那儿是好的」是两件事，
+> 尤其是当你的测试环境恰好比用户环境更宽容的时候。**
 
 ### 6.1 「端口在听」≠「服务起来了」
 
@@ -251,6 +276,92 @@ P2 有 7 个模块。最初的判定是「必需端口（网关/后台/认证/�
 `page.waitForFunction(fn, {timeout: N})` 里的 `{timeout: N}` 会被当成 `arg` 吃掉，
 实际用默认的 30 秒。必须写 `page.waitForFunction(fn, null, {timeout: N})`。
 
+### 6.9 `print()` 会在中文 Windows 上把服务打死 ★
+
+这一条和下面 6.10 是**同一类**：WorkBuddy 的运行环境把问题掩盖了，
+所以我从 bash 里怎么测都是绿的，用户一用就坏。
+
+stdout 一旦被重定向到文件（`start.cmd` 就是这么干的），Python 用的是 **locale 编码（GBK）**
+而不是 UTF-8。于是任何 GBK 表达不了的字符都会让 `print()` 抛 `UnicodeEncodeError`：
+
+```
+UnicodeEncodeError: 'gbk' codec can't encode character '\u274c'
+```
+
+触发它的有两类字符，都很容易碰到：日志文案里的 `❌ ✗`，以及 **U+FFFD** ——
+把 GBK 字节按 UTF-8 解码时会成片产生，而它同样编不进 GBK。
+
+**为什么后果很严重**：实测两次崩溃**都发生在异常处理里面** ——
+`start_middleware` 打印子进程输出时炸 → `job_start` 的 `except` 想补一条
+「❌ 启动失败：…」又炸 → 线程静默死亡 → 前端永远停在「启动中」，
+日志里只有一段 traceback，看不出是哪一步失败的。
+
+**根因有两层**，都要修：
+1. `_force_utf8_stdio()` 在启动时把 stdout/stderr 切成 UTF-8 + `errors="replace"`；
+   顺手打开 `line_buffering=True` —— 不然重定向到文件时 banner 会卡在 8KB 块缓冲里，
+   端口都在监听了日志还是 0 字节，进程被 `taskkill` 掉时那块缓冲直接丢。
+2. `decode_console()` 按「先严格 UTF-8、再严格 GBK、最后 replace」解码子进程输出。
+   写死 `"utf-8"` 会把 `svc.cmd` 的 GBK 中文变成满屏 U+FFFD（中文全丢，还会引发上面那层崩溃）。
+
+**复现方式**（必须清掉这两个变量，否则测不出来）：
+
+```bash
+env -u PYTHONUTF8 -u PYTHONIOENCODING python -c "print('\u274c')" > out.txt 2>&1
+```
+
+WorkBuddy 的 bash 注入了 `PYTHONUTF8=1` + `PYTHONIOENCODING=utf-8`，
+所以**从 bash 里跑永远是好的**；真实用户双击 `start.cmd` 走的是 PowerShell → cmd 路径，
+那里 `sys.stdout.encoding == 'gbk'`。
+
+### 6.10 `shutil.which("bash")` 会命中 WSL 的启动器 ★
+
+`find_bash()` 的第一个候选是 `shutil.which("bash")`。问题是 Windows 在
+`C:\Windows\System32\bash.exe` 放了一个 **86KB 的 WSL 启动器**，
+而它在普通 PATH 里**排在 Git 的 bash 前面**：
+
+```
+PS> Get-Command bash -All
+C:\Windows\System32\bash.exe                       ← 先命中这个
+C:\Program Files\Git\usr\bin\bash.exe
+C:\Users\...\AppData\Local\Microsoft\WindowsApps\bash.exe
+```
+
+WSL 要起 Hyper-V 虚拟机，没开就报 `HCS_E_HYPERV_NOT_INSTALLED`，
+而且 **WSL 的输出是 UTF-16**，按单字节读出来是一片
+`B a s h / S e r v i c e / C r e a t e I n s t a n c e /...` 的乱码 ——
+看不出是谁在报错、在报什么错。
+
+**同样只在从普通 Windows 命令行启动时踩得到**：
+
+| 启动方式 | `which("bash")` 命中 | 结果 |
+|---|---|---|
+| WorkBuddy 的 bash | Git Bash | 正常（所以开发时测不出来） |
+| 双击 `start.cmd` | `System32\bash.exe`（WSL） | 中间件全起不来 → 项目全起不来 |
+
+**修法**：`_is_wsl_bash()` 排掉 `%SystemRoot%\System32\` 与 `WindowsApps\` 下的 bash，
+让 `find_bash()` 落到显式的 Git 路径上。实测修复后
+`/api/system` 报的 bash 从 System32 变成 `C:\Program Files\Git\bin\bash.exe`，
+P4 从「MySQL 起不来」变成 12 秒正常启动。
+
+### 6.11 两个实例不能写同一个日志文件
+
+cmd 的 `>>` 重定向**打不开别的进程已经持有的文件**。所以
+`start.cmd 8991` 在 8990 已经在跑时会立刻死掉，报的是：
+
+```
+另一个程序正在使用此文件，进程无法访问。
+```
+
+这句话里既没有端口也没有「工作台」，完全指不到问题。
+**修法**：日志文件名带上端口（`dashboard-console-8990.log`）。
+
+### 6.12 `Get-Content` 默认按 GBK 读 UTF-8 文件
+
+`start.cmd` 的失败分支会用 PowerShell 打印日志尾部。PowerShell 5.1 的 `Get-Content`
+**默认按 ANSI 代码页读**（中文 Windows 上是 GBK），而这个日志是 UTF-8 写的 ——
+不加 `-Encoding UTF8` 就是满屏 `閫€鍑虹爜`、`鈹屸攢鈹€`，
+看起来像日志本身坏了，实际上是读的人用错了编码。
+
 ---
 
 ## 7. 安全边界
@@ -273,3 +384,10 @@ P2 有 7 个模块。最初的判定是「必需端口（网关/后台/认证/�
 - **状态是轮询的**（空闲 8 秒 / 有任务 1.5 秒一次）。它不是事件驱动的，
   所以「你在别的终端手工起了个服务」最多 8 秒后才反映到界面上。
 - 工作台自己重启后，内存里的「启动过程日志」会清空（应用日志不受影响，那是落盘的）。
+- **`start.cmd` 是前台进程**：控制台窗口关掉 = 服务停掉。想让它脱离窗口，
+  用 `stop.cmd` 管启停、或者自己 `start /min`。这是有意跟着 `run-*.cmd` 那套约定走的
+  （前台才能把重定向放在真正的命令行上，见 6.11 附近）。
+- **两个实例可以并存**（8990 + 8991），但它们**各有各的内存状态**：
+  在 8991 上启动的项目，8990 那边看不到「启动过程日志」（状态还是能看到的，靠端口探测）。
+- `stop.cmd` **不会**停掉项目/中间件 —— 它们是 detached 进程，有意让它们活过 UI 的重启。
+  要停项目用界面上的停止按钮，要停中间件用 `svc.sh` / `p2.sh`。
