@@ -23,6 +23,8 @@ const S = {
   timer: null,
   pending: new Set(),   // 正在发请求的项目 id，避免连点
   drawerId: null,
+  offline: false,       // 工作台进程是不是已经联系不上了（见 setOffline）
+  offlineWhy: '',
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -72,11 +74,43 @@ function stateText(p) {
 }
 
 async function api(path, opts) {
-  const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
+  let r;
+  try {
+    r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
+  } catch (e) {
+    // ★ fetch 只在「压根没连上」时才 reject；HTTP 4xx/5xx 是正常 resolve。
+    //   所以这里能干净地把「工作台进程没了」和「这个请求被拒了」分开。
+    setOffline(true, `请求 ${path} 时连接被拒绝`);
+    throw new Error('连不上工作台服务 —— 它可能已经退出了');
+  }
+  setOffline(false);
   let body = null;
   try { body = await r.json(); } catch (_) { /* 非 JSON */ }
   if (!r.ok) throw new Error((body && body.error) || `${r.status} ${r.statusText}`);
   return body;
+}
+
+// -------------------------------------------------------------- 连接状态 --
+// ★ 为什么要专门做这件事（实测踩过）：
+//   工作台是一个独立进程，页面只是它托管的静态文件。它一退出
+//   （Ctrl+C、被 taskkill、崩了），页面不会自己知道 ——
+//   于是用户点「启动」只得到一句 "Failed to fetch"，
+//   看起来像**项目**起不来，其实是**工作台自己**没了；
+//   而且按钮不置灰，用户会一直点，越点越困惑。
+//   所以把「服务还在不在」做成一个显式状态：断了就挂常驻横幅 + 禁掉启停按钮，
+//   并且把恢复办法（双击 start.cmd）直接写在横幅上。
+function setOffline(off, why) {
+  const nextWhy = off ? (why || '') : '';
+  if (S.offline === off && S.offlineWhy === nextWhy) return;
+  S.offline = off;
+  S.offlineWhy = nextWhy;
+  const el = $('#offline');
+  if (el) {
+    el.hidden = !off;
+    const w = $('#offline-why');
+    if (w) w.textContent = nextWhy ? `（${nextWhy}）` : '';
+  }
+  render();   // 让卡片上的按钮禁用状态跟上
 }
 
 let toastTimer = null;
@@ -229,15 +263,20 @@ function cardHTML(p) {
   const running = st === 'running';
 
   let actions = '';
+  // 服务断了就没法启停 —— 直接禁用并说明原因。
+  // 比让用户点了没反应好：那时他只会以为「项目起不来」。
+  const off = S.offline ? 'disabled title="连不上工作台服务，启停不可用（见顶部横幅）"' : '';
   if (p.launch.canStart) {
     if (busy) {
       actions += `<button class="btn" disabled>${esc(stateText(p))}…</button>`;
     } else if (running) {
       if (p.openUrl) actions += `<button class="btn btn-primary" data-act="open" data-id="${esc(p.id)}">打开</button>`;
-      actions += `<button class="btn btn-danger" data-act="stop" data-id="${esc(p.id)}">停止</button>`;
+      actions += `<button class="btn btn-danger" data-act="stop" data-id="${esc(p.id)}" ${off}>停止</button>`;
     } else {
+      const t = S.offline ? '连不上工作台服务，启停不可用（见顶部横幅）'
+              : (p.declared === 'needs-build' ? '构建产物不存在，启动会失败' : '');
       actions += `<button class="btn btn-primary" data-act="start" data-id="${esc(p.id)}"
-        ${p.declared === 'needs-build' ? 'title="构建产物不存在，启动会失败"' : ''}>启动</button>`;
+        ${S.offline ? 'disabled' : ''} ${t ? `title="${esc(t)}"` : ''}>启动</button>`;
     }
   }
   actions += `<button class="btn btn-ghost" data-act="detail" data-id="${esc(p.id)}">详情</button>`;
@@ -609,10 +648,11 @@ function tick(delay) {
       if (busy) await loadSystem();
       if (S.drawerId) loadJobLog(S.drawerId);
     } catch (e) {
-      // 服务挂了就别刷屏，慢下来重试
+      // 服务挂了就别刷屏。横幅由 api() 里的 setOffline() 负责挂上，
+      // 这里只补一句结果行；重试间隔缩短，好让「服务又起来了」尽快被发现。
       $('#result-line').innerHTML = `<span style="color:var(--bad)">连不上工作台服务：${esc(e.message)}</span>`;
     }
-    tick();
+    tick(S.offline ? 3000 : undefined);
   }, d);
 }
 
@@ -683,6 +723,18 @@ function bind() {
 
   $('#btn-refresh').addEventListener('click', reloadConfig);
   $('#btn-add').addEventListener('click', showTemplate);
+
+  // 横幅上的「重试连接」：服务重新起来后不用刷新整页
+  const retry = $('#btn-offline-retry');
+  if (retry) retry.addEventListener('click', async () => {
+    try {
+      await loadProjects();
+      await loadSystem();
+      toast('已重新连上工作台服务', 'ok');
+    } catch (e) {
+      toast('还是连不上：' + e.message, 'bad');
+    }
+  });
   $('#btn-theme').addEventListener('click', () => {
     const cur = document.documentElement.dataset.theme;
     applyTheme(cur === 'dark' ? 'light' : 'dark');

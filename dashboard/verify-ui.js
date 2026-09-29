@@ -301,6 +301,46 @@ async function waitFor(page, fn, timeoutMs, label) {
   const realErrors = errors.filter(e => !/favicon/i.test(e));
   ok('页面没有 JS 报错', realErrors.length === 0, realErrors.slice(0, 4));
 
+  // ------------------------------------------ 服务断开时的表现（放最后）--
+  // ★ 这一段测的是「工作台进程退出后，页面怎么表现」。
+  //   实测踩过：进程没了，页面只是它托管的静态文件，不会自己知道 ——
+  //   用户点「启动」只得到一句 "Failed to fetch"，看起来像**项目**起不来，
+  //   而且按钮不置灰，用户会一直点、越点越困惑。
+  //   这里用 route 拦截把 /api/ 全断掉来复现那个状态，不需要真去杀进程。
+  //
+  //   为什么放在报错检查之后：fetch 失败会在控制台留下一条 error，
+  //   放前面会把「页面没有 JS 报错」这条断言弄脏。
+  section('十二、工作台服务断开时的表现');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.route(/\/api\//, route => route.abort());
+  await page.click('#btn-refresh');                       // 触发一次必然失败的请求
+  const bannerUp = await waitFor(page,
+    () => !document.querySelector('#offline').hidden, 6000, '断线横幅出现');
+  ok('服务断开后挂出常驻横幅', bannerUp);
+
+  const offText = await page.innerText('#offline').catch(() => '');
+  ok('横幅点明是「工作台服务」连不上，而不是项目起不来',
+    /连不上工作台服务/.test(offText), offText.slice(0, 90));
+  ok('横幅直接给出恢复办法（双击 start.cmd）', /start\.cmd/.test(offText));
+  ok('横幅带出了具体原因，不是空泛的「出错了」',
+    /连接被拒绝/.test(offText), offText.slice(0, 120));
+
+  const offDisabled = await page.locator(
+    '.card button[data-act="start"][disabled], .card button[data-act="stop"][disabled]').count();
+  ok('断线时启停按钮被禁用，不再是「点了没反应」', offDisabled >= 1, { offDisabled });
+  const detailAlive = await page.locator('.card button[data-act="detail"]:not([disabled])').count();
+  ok('断线时「详情」仍可用（它不依赖后端）', detailAlive === 5, { detailAlive });
+  await page.screenshot({ path: path.join(DIAG, 'dashboard-offline.png') });
+  console.log('  [OK]  断线态截图 → target/dashboard-offline.png');
+
+  await page.unroute(/\/api\//);
+  await page.click('#btn-offline-retry');
+  const bannerDown = await waitFor(page,
+    () => document.querySelector('#offline').hidden, 8000, '恢复后横幅收起');
+  ok('服务恢复后横幅自动收起', bannerDown);
+  const onEnabled = await page.locator('.card button[data-act="start"]:not([disabled])').count();
+  ok('服务恢复后启停按钮重新可用', onEnabled >= 1, { onEnabled });
+
   // -------------------------------------------------------------- 汇总 --
   console.log('\n' + '─'.repeat(62));
   console.log(`  通过 ${pass} 项，失败 ${fail} 项`);

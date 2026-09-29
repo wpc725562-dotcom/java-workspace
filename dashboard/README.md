@@ -50,7 +50,7 @@ dashboard/
 │   ├── index.html
 │   ├── style.css     深浅色 + 响应式，无 CSS 框架
 │   └── app.js        无框架、无构建步骤
-├── verify-ui.js      用真浏览器跑 55 项界面断言
+├── verify-ui.js      用真浏览器跑 63 项界面断言
 ├── start.cmd         一键启动：找 Python / 起服务 / 落日志 / 已运行就只开浏览器
 └── stop.cmd          按端口停止，幂等
 ```
@@ -153,7 +153,7 @@ dashboard/
 ## 5. 验证
 
 ```bash
-# 界面（真浏览器，55 项断言，含三个断点的响应式截图）
+# 界面（真浏览器，63 项断言，含三个断点的响应式截图）
 NODE_PATH="C:/Users/Administrator/.workbuddy-ai/binaries/node/workspace/node_modules" \
   "C:/Users/Administrator/.workbuddy-ai/binaries/node/versions/22.22.2-3/node.exe" \
   dashboard/verify-ui.js
@@ -176,7 +176,7 @@ NODE_PATH="C:/Users/Administrator/.workbuddy-ai/binaries/node/workspace/node_mod
 
 ---
 
-## 6. 设计上踩过的坑（12 条，都不是猜的）
+## 6. 设计上踩过的坑（13 条，都不是猜的）
 
 > **6.9–6.12 是同一批发现的，值得单独说一句。**
 > 它们只在**从普通 Windows 命令行启动**时才出现：WorkBuddy 的 bash 会注入
@@ -361,6 +361,54 @@ cmd 的 `>>` 重定向**打不开别的进程已经持有的文件**。所以
 **默认按 ANSI 代码页读**（中文 Windows 上是 GBK），而这个日志是 UTF-8 写的 ——
 不加 `-Encoding UTF8` 就是满屏 `閫€鍑虹爜`、`鈹屸攢鈹€`，
 看起来像日志本身坏了，实际上是读的人用错了编码。
+
+### 6.13 工作台进程退出后，页面不会自己知道 ★
+
+这是**用户实际踩到的**一条，而且是我自己造成的。
+
+工作台是一个独立进程，页面只是它托管的静态文件。进程一退出
+（Ctrl+C、被 `taskkill`、崩了），页面**不会自己知道** —— 它照常渲染、卡片照常显示、
+按钮照常可点。于是用户点「启动」只得到一句 `Failed to fetch`：
+
+- 看起来像**项目**起不来，其实是**工作台自己**没了；
+- 按钮不置灰，用户会一直点，越点越困惑；
+- 浏览器控制台里那句 `net::ERR_FAILED` 用户不会去看。
+
+**修法**：把「服务还在不在」做成一个显式状态。
+
+```js
+async function api(path, opts) {
+  let r;
+  try {
+    r = await fetch(path, opts);
+  } catch (e) {
+    // ★ fetch 只在「压根没连上」时才 reject；HTTP 4xx/5xx 是正常 resolve。
+    //   所以这里能干净地把「进程没了」和「这个请求被拒了」分开。
+    setOffline(true, `请求 ${path} 时连接被拒绝`);
+    throw new Error('连不上工作台服务 —— 它可能已经退出了');
+  }
+  setOffline(false);
+  /* ... */
+}
+```
+
+`setOffline()` 做三件事：挂一条常驻横幅、把启停按钮禁掉、并在横幅上**直接写出恢复办法**
+（双击 `dashboard\start.cmd`）。「打开」和「详情」不依赖后端，保持可用。
+断线时轮询间隔从 8 秒缩到 3 秒，好让「服务又起来了」尽快被发现。
+
+**怎么测**：不需要真去杀进程 —— 用 playwright 的 route 拦截把 `/api/` 全断掉：
+
+```js
+await page.route(/\/api\//, route => route.abort());
+await page.click('#btn-refresh');
+//   断言：横幅出现、文案点明是「工作台服务」、启停按钮 disabled、详情仍可用
+await page.unroute(/\/api\//);
+await page.click('#btn-offline-retry');
+//   断言：横幅收起、按钮恢复可用
+```
+
+**注意把它放在「页面没有 JS 报错」那条断言之后**：fetch 失败会在控制台留一条 error，
+放前面会把那条断言弄脏。
 
 ---
 

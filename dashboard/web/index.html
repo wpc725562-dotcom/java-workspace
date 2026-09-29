@@ -10,6 +10,23 @@
 </head>
 <body>
 
+<!-- ★ 常驻连接状态横幅（默认隐藏，由 app.js 的 setOffline() 控制）。
+     为什么需要它：这个页面只是工作台进程托管的静态文件，进程一退出
+     （Ctrl+C / 被 taskkill / 崩了），页面自己不会知道 ——
+     用户点「启动」只会看到一句 "Failed to fetch"，误以为是项目起不来。 -->
+<div id="offline" class="offline" hidden role="alert">
+  <span class="offline-dot" aria-hidden="true"></span>
+  <div class="offline-text">
+    <strong>连不上工作台服务</strong> —— 这个页面只是静态文件，
+    负责启停的进程已经退出了，所以下面的按钮点了不会有任何反应。
+    <span class="offline-why" id="offline-why"></span>
+  </div>
+  <div class="offline-actions">
+    <button class="btn btn-sm btn-primary" id="btn-offline-retry">重试连接</button>
+    <span class="offline-hint">重新启动：双击 <code>dashboard\start.cmd</code></span>
+  </div>
+</div>
+
 <header class="topbar">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true">🧰</span>
