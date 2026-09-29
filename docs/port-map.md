@@ -21,7 +21,7 @@
 | `9200` | Elasticsearch **8.18.8** | `.runtime\elasticsearch` | ✅ 运行中 | mall-search 用，**免鉴权** |
 | `9300` | Elasticsearch 节点间 | 同上 | ✅ 运行中 | single-node 模式也会开 |
 | `4369` | **Erlang epmd** | `.runtime\erlang` | ✅ 运行中 | RabbitMQ 的运行时依赖，**别误判成占用** |
-| `5672` | RabbitMQ **4.3.6** AMQP | `.runtime\rabbitmq` | ✅ 运行中 | mall-portal 用，**vhost `/mall`** |
+| `5672` | RabbitMQ **4.3.6** AMQP | `.runtime\rabbitmq` | ⚠️ **端口被抢，见下方修正四** | mall-portal 用，**vhost `/mall`** |
 | `15672` | RabbitMQ 管理台 | 同上 | ✅ 运行中 | |
 | `25672` | RabbitMQ 节点间 | 同上 | ✅ 运行中 | 集群/CLI 通信 |
 | `9000` | MinIO API | `.runtime\minio` | ✅ 运行中 | mall-admin 用，bucket `mall` |
@@ -119,6 +119,43 @@ MySQL 8 把 `rank` / `groups` / `system` / `window` 等变成了**保留字**。
 实测也确实用上了：eladmin 的 `sql/eladmin.sql` 里有 **1 处 `utf8mb3`**（5.7 不认这个别名），
 而 mall 的 `mall.sql` 在 8.0 上零问题。两边各得其所。
 
+### 修正四：`5672` 被 **WorkBuddyAI.exe** 抢了（2026-09-29 实测）
+
+RabbitMQ 的 AMQP 端口 `5672`，**在 WorkBuddy 客户端运行时是起不来的** ——
+`WorkBuddyAI.exe` 自己也监听这个端口：
+
+```
+TCP    127.0.0.1:5672    0.0.0.0:0    LISTENING    22276   ← WorkBuddyAI.exe
+```
+
+后果分两层：
+
+1. **RabbitMQ 起不来**。`svc.sh start rabbitmq` 会打印
+   `[SKIP] RabbitMQ already listening on 5672` 然后退出码 0 —— 它只检查端口在不在听，
+   **不检查是谁在听**，所以这是个静默失败。
+2. **即使 RabbitMQ 起不来，`mall-portal` 也照样会把 HTTP 端口开起来**，
+   但它的 RabbitMQ 监听器会持续报错，因为它真的连上了 5672 —— 只是对面不是 RabbitMQ：
+
+   ```
+   Attempting to connect to: [localhost:5672]
+   java.lang.IllegalStateException: Frame body is too large (1345270062),
+   maximum configured size is 67108864
+   ```
+
+   报「帧太大」是因为它在按 AMQP 协议解析 WorkBuddy 的私有协议数据。
+
+**影响范围**：只有 P2 的 `mall-portal`（订单超时取消那条链路）。
+P0 / P1 / P3 / P4 都不碰 RabbitMQ。
+
+**三个选择**：
+- 跑完整 P2 之前先关掉 WorkBuddy 客户端；
+- 或者把 `.runtime\conf` 里 RabbitMQ 的 AMQP 端口改掉，并同步改 mall-portal 的 Nacos 配置；
+- 或者接受现状 —— `mall-portal` 的 HTTP 接口能用，只是消息队列那部分不可用。
+
+> `dashboard/` 的项目工作台会**核验占用端口的进程名**，所以它把这个端口显示成
+> 「端口被占用（WorkBuddyAI.exe）」而不是误报成「RabbitMQ 运行中」。
+> `svc.sh status` 没有这层核验，会误报。
+
 ---
 
 ## 2. 应用端口（各项目自己的，已核对实际配置）
@@ -132,6 +169,7 @@ MySQL 8 把 `rank` / `groups` / `system` / `window` 等变成了**保留字**。
 | P2 | mall-swarm | `8080` `8081` `8082` `8085` `8101` `8201` `8401` | ✅ 逐模块核对过 |
 | P3 | seckill | 待定 | 克隆后核对 |
 | **P4** | **exam-tracker**（本工作区原创） | **`8090`（context-path `/api`）** | ✅ **实测启动成功，86/86 端到端断言通过**（2026-09-28） |
+| — | **dashboard**（本工作区原创工具） | `8990` | 只绑 `127.0.0.1`；落在应用端口与中间件端口之外的空档 |
 
 P2 的端口不是记忆，是实际读出来的：
 
@@ -184,7 +222,7 @@ netstat -ano | grep ":3308 " | grep LISTENING
 
 # 批量查本表所有端口
 for p in 3307 3308 6380 8848 8849 9848 27017 9200 9300 4369 5672 15672 25672 9000 9001 \
-         8000 8123 8127 3000 8080 8081 8082 8085 8101 8201 8401; do
+         8000 8123 8127 3000 8080 8081 8082 8085 8090 8101 8201 8401 8990; do
   netstat -ano 2>/dev/null | grep -q ":$p .*LISTENING" && echo "$p  占用" || echo "$p  空闲"
 done
 ```

@@ -9,16 +9,19 @@
 >   を `svc.cmd` 1 コマンドで起停
 > - JDK 8 / 17 / 21 を `use-jdk` で**ウィンドウ単位**に切替（`JAVA_HOME` は汚さない）
 > - 各プロジェクトの起動手順・ハマりどころを **2,400 行超のドキュメント**に記録
-> - E2E 検証スクリプト 8 本（Python）
+> - E2E 検証スクリプト 7 本（Python）＋ 自作の**プロジェクト・ダッシュボード**
+>   —— 5 プロジェクトの状態を一覧し、ワンクリックで起停（UI 検証 55 項目パス）
 > - さらに **自作の Spring Boot 製 REST API**（[exam-tracker](https://github.com/wpc725562-dotcom/exam-tracker)）
->   —— 単体テスト 217 件、E2E 検証 86 項目、すべてパス
+>   —— 単体テスト 309 件・結合テスト 35 件・E2E 検証 86 項目、すべてパス
 >
 > **English summary**: A portable, zero-system-pollution development workspace that lets
 > three mutually incompatible Spring Boot generations (2.7 / 3.4 / 3.5) coexist on one
-> Windows host — portable JDKs, script-managed middleware, 2,400+ lines of runbooks,
-> 8 end-to-end verification scripts, plus a **from-scratch Spring Boot REST API**
-> ([exam-tracker](https://github.com/wpc725562-dotcom/exam-tracker)) with 217 unit tests
-> and 86 passing end-to-end assertions.
+> Windows host — portable JDKs, script-managed middleware, ~3,300 lines of runbooks,
+> 7 end-to-end verification scripts, a **self-built project dashboard** (one-click
+> start/stop for all five projects, verified by 55 browser assertions), plus a
+> **from-scratch Spring Boot REST API**
+> ([exam-tracker](https://github.com/wpc725562-dotcom/exam-tracker)) with 309 unit tests,
+> 35 integration tests and 86 passing end-to-end assertions.
 
 > 建立于 2026-09-28。目的：把 P0–P3 四个阶段的项目**隔离**在一个工作区里，共用一套中间件，
 > 但**互不干扰**（各自的 JDK、各自的依赖、各自的数据库 schema、各自的端口）。
@@ -28,7 +31,11 @@
 >
 > **本工作区自己写的项目**（不属于 P0–P3 的克隆）：**[exam-tracker](https://github.com/wpc725562-dotcom/exam-tracker)**
 > —— 备考任务追踪 API，Spring Boot 3.5 / Java 17 / JWT / MySQL，
-> 22 个接口、217 个单元测试、86 项端到端断言。它**单独发了一个仓库**，见第 0 节。
+> 22 个接口、309 个单元测试、35 个集成测试、86 项端到端断言。它**单独发了一个仓库**，见第 0 节。
+>
+> **本工作区自己写的工具**：**[dashboard/](dashboard/)** —— 项目工作台。
+> 一个页面看完 P0–P4 的状态，能筛选能搜索，能真的把项目起起来。
+> 零第三方依赖（标准库 `http.server` + 原生 JS），55 项浏览器断言全通过。
 
 ---
 
@@ -54,11 +61,11 @@ P4 `exam-tracker` 是**本工作区原创**的，但它**单独发了一个仓�
 > P4 是原创，为什么也不放进来？因为**埋在子目录里没人会点进去**。
 > 它需要一个能被一眼看到的仓库地址，才能填上「Java + Spring 后端」那一栏。
 
-**内容规模**：脚本 2,200+ 行、文档 2,500+ 行、验证工具 2,100+ 行，合计 **6,800 行左右**
-（不含 P4 的 7,600 行）。
+**内容规模**：脚本 1,900 行、文档 3,300 行、验证工具 1,400 行、项目工作台 3,200 行，
+合计 **约 9,800 行**（不含 P4 的 11,500 行）。
 
-**P4 单独统计**：50 个主源文件 / 3,848 行 + 16 个测试文件 / 3,808 行 = **7,656 行**，
-217 个单元测试、86 项端到端断言，全部实测通过。
+**P4 单独统计**：60 个主源文件 / 5,270 行 + 23 个测试文件 / 6,311 行 = **11,581 行**，
+309 个单元测试、35 个集成测试、86 项端到端断言，全部实测通过（CI 上同样全绿）。
 
 ---
 
@@ -123,6 +130,13 @@ java-workspace\
 │   ├── run-p0.md                ← P0 eladmin-mp 启动手册
 │   ├── run-p1.md                ← P1 yu-ai-agent 启动手册
 │   └── run-p2.md                ← P2 mall-swarm 启动手册
+│
+├── dashboard\                   ← ★ 本工作区自研：项目工作台（见第 10 节）
+│   ├── README.md                ← 用法 + 加新项目 + 设计上踩过的 8 个坑
+│   ├── projects.json            ← 声明式项目清单：加项目只改这个文件
+│   ├── server.py                ← 零依赖本地服务（标准库 http.server）
+│   ├── verify-ui.js             ← 真浏览器 55 项界面断言 + 三断点截图
+│   └── web\                     ← index.html / style.css / app.js（无框架无构建）
 │
 ├── tools\                       ← 验证与自动化工具（Python）
 │   ├── p0-login-test.py         ← P0 登录链路验证
@@ -364,7 +378,6 @@ P4 的 86 项断言分 9 组：探针/文档、注册登录、**未认证 → JS
 打卡（科目从任务推导 / 未来日期拒绝）、统计（连续天数 / 倒计时 / 窗口折算）、
 **数据隔离（B 用户对 A 的数据全部 404）**、删除保护（409 → `force=true`）、日志体检。
 实测结果：**86/86 PASS**。
-
 设计原则写在脚本的 docstring 里，核心是两条：
 
 1. **只看 HTTP 200 不够** —— 200 也可能是一段错误提示文本。
@@ -376,3 +389,54 @@ P4 的 86 项断言分 9 组：探针/文档、注册登录、**未认证 → JS
 > ⚠️ 本机系统代理会劫持回环地址，`curl http://127.0.0.1:...` 会超时。
 > 脚本用 `http.client` 直连（等价于 `curl --noproxy '*'`）。
 > 手工 curl 时记得加 `--noproxy '*'`。
+
+---
+
+## 10. 项目工作台（dashboard）
+
+五个项目各用各的 JDK、各有各的前置中间件、各有各的端口。想跑起任何一个，
+都得先记住「用哪个 JDK、要不要先起中间件」。这份记忆分散在 6 份文档里，
+而且**忘了一步不会报「你忘了一步」，只会报一堆看不懂的错**。
+
+工作台把这些收进一份声明式清单，并且真的能替你把步骤跑完。
+
+```bash
+cd /d/java-workspace
+python dashboard/server.py        # 打开 http://127.0.0.1:8990/
+```
+
+**能做什么**：卡片/列表双视图，按状态、类别、来源、标签筛选 + 关键词搜索；
+一键启动（自动切 JDK、自动起中间件、轮询端口到就绪）、一键停止、一键打开；
+详情抽屉里有启动命令原文、逐步骤的启动日志、应用日志；底部可展开看 9 个中间件状态。
+
+**加项目**：只改 `dashboard/projects.json`，页面右上角「＋ 新增项目」有模板和步骤说明。
+
+**零依赖**：标准库 `http.server` + 原生 JS/CSS。这个工作区的卖点是「删掉目录就等于没来过」，
+引入 `pip install` / `npm install` 就破坏了这个前提。
+
+### 实测启动耗时（2026-09-29）
+
+| 项目 | 耗时 | 说明 |
+|---|---|---|
+| P4 exam-tracker | 12.8s | 含自动拉起 MySQL 8 |
+| P0 eladmin-mp | 11.6s | 含自动拉起 MySQL 5.7 + Redis，JDK 8 |
+| P1 yu-ai-agent | 32.6s | 含自动拉起 Ollama，JDK 21 |
+| P2 mall-swarm | 166s | 含自动拉起 5 个中间件，7 个模块全部就绪 |
+| P3 seckill | — | 拒绝启动并说明原因（还没有代码） |
+
+界面验证：`dashboard/verify-ui.js`，真浏览器 **55 项断言全通过**，
+输出桌面/平板/手机/深色四档截图到 `docs/screenshots/`。
+
+### ⚠️ 两个必须知道的环境冲突
+
+1. **`5672` 被 `WorkBuddyAI.exe` 占着**（宿主客户端自己也用了这个端口）。
+   RabbitMQ 起不来，`mall-portal` 的 RabbitMQ 监听器会持续报
+   `Frame body is too large (1345270062)` —— 它在跟 WorkBuddy 说话。
+   要跑完整的 P2，得先关掉 WorkBuddy 客户端，或者把 RabbitMQ 换端口。
+   > 注意：`svc.sh status` 会把这个端口报成 `RabbitMQ LISTENING`，**那是误报**。
+   > 工作台会核验占用端口的进程名，所以能正确标成「端口被占用」。
+
+2. **`svc.sh start` 只接受一个 target**（`svc.cmd` 里是 `set "TARGET=%~2"`）。
+   写成 `svc.sh start mysql57 redis` 只会起 mysql57，第二个被**静默忽略**，退出码还是 0。
+
+完整的设计说明、以及 8 个踩过的坑（含复现方式）写在 [`dashboard/README.md`](dashboard/README.md)。

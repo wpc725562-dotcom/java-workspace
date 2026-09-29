@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Java Workspace 工作台</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧰</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">🧰</span>
+    <div class="brand-text">
+      <h1 id="page-title">Java Workspace 工作台</h1>
+      <p id="page-sub">P0–P4 项目集中查看与启停</p>
+    </div>
+  </div>
+
+  <div class="topbar-actions">
+    <button id="btn-refresh" class="btn btn-ghost" title="重新读取 projects.json">重载配置</button>
+    <button id="btn-add" class="btn btn-ghost" title="怎么新增一个项目">＋ 新增项目</button>
+    <button id="btn-theme" class="btn btn-icon" title="切换深浅色" aria-label="切换深浅色">◐</button>
+  </div>
+</header>
+
+<section class="toolbar" aria-label="筛选与搜索">
+  <div class="search-wrap">
+    <span class="search-icon" aria-hidden="true">⌕</span>
+    <input id="search" type="search" placeholder="搜索项目名、简介、技术栈、标签…" autocomplete="off" spellcheck="false">
+    <button id="search-clear" class="search-clear" hidden aria-label="清空搜索">×</button>
+  </div>
+
+  <div class="filters" id="filters">
+    <div class="filter-group" data-group="state">
+      <span class="filter-label">状态</span>
+      <div class="chips" id="chips-state"></div>
+    </div>
+    <div class="filter-group" data-group="category">
+      <span class="filter-label">类别</span>
+      <div class="chips" id="chips-category"></div>
+    </div>
+    <div class="filter-group" data-group="origin">
+      <span class="filter-label">来源</span>
+      <div class="chips" id="chips-origin"></div>
+    </div>
+    <div class="filter-group" data-group="tag">
+      <span class="filter-label">标签</span>
+      <div class="chips" id="chips-tag"></div>
+    </div>
+  </div>
+
+  <div class="toolbar-foot">
+    <p class="result-line" id="result-line"></p>
+    <div class="view-toggle" role="group" aria-label="视图切换">
+      <button class="btn btn-seg is-on" data-view="grid">卡片</button>
+      <button class="btn btn-seg" data-view="list">列表</button>
+    </div>
+  </div>
+</section>
+
+<main>
+  <div id="grid" class="grid" aria-live="polite"></div>
+  <div id="empty" class="empty" hidden>
+    <p class="empty-emoji">🔍</p>
+    <p>没有符合条件的项目。</p>
+    <button class="btn btn-ghost" id="btn-reset-filter">清空筛选条件</button>
+  </div>
+
+  <section class="mw-section">
+    <button class="mw-head" id="mw-toggle" aria-expanded="false" aria-controls="mw-body">
+      <span class="mw-caret" aria-hidden="true">▸</span>
+      <span class="mw-title">中间件</span>
+      <span class="mw-summary" id="mw-summary">加载中…</span>
+    </button>
+    <div class="mw-body" id="mw-body" hidden>
+      <p class="mw-hint">
+        中间件是便携版的，由 <code>svc.sh</code> 启停。项目启动时工作台会自动把缺的中间件拉起来。
+        <strong>Ollama 走的是另一条路</strong>（<code>run-ollama.cmd</code>，不在 svc.sh 里），
+        工作台也能代启，只是它是个大模型服务，起来要慢一些。
+        <br>
+        <strong>「运行中」不只看端口在不在听，还会核对占用端口的进程名</strong> ——
+        所以像「端口被别的程序占着」这种情况会被标成<strong>端口被占用</strong>，而不是误报成正常。
+      </p>
+      <div class="mw-grid" id="mw-grid"></div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>
+    <span class="foot-k">工作区</span><code id="foot-ws">—</code>
+    <span class="foot-k">清单</span><code id="foot-cfg">—</code>
+  </p>
+  <p class="foot-note">
+    新增项目只需编辑 <code>projects.json</code>，不用改代码。
+    <strong>来源一栏必须如实标注</strong> —— 克隆来学习的和自己手写的，在界面上必须能一眼分开。
+  </p>
+</footer>
+
+<!-- 详情抽屉 -->
+<aside id="drawer" class="drawer" hidden aria-label="项目详情">
+  <div class="drawer-scrim" data-close></div>
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+    <header class="drawer-head">
+      <div>
+        <h2 id="drawer-title">—</h2>
+        <p id="drawer-sub">—</p>
+      </div>
+      <button class="btn btn-icon" data-close aria-label="关闭">×</button>
+    </header>
+    <div class="drawer-body" id="drawer-body"></div>
+  </div>
+</aside>
+
+<!-- 新增项目说明 -->
+<aside id="modal" class="drawer" hidden aria-label="新增项目">
+  <div class="drawer-scrim" data-close></div>
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <header class="drawer-head">
+      <div>
+        <h2 id="modal-title">新增一个项目</h2>
+        <p>改 <code>projects.json</code> 就行，不用动代码</p>
+      </div>
+      <button class="btn btn-icon" data-close aria-label="关闭">×</button>
+    </header>
+    <div class="drawer-body">
+      <ol class="steps" id="modal-steps"></ol>
+      <div class="code-head">
+        <span>复制这段粘到 <code>projects</code> 数组里</span>
+        <button class="btn btn-ghost btn-sm" id="btn-copy-tpl">复制</button>
+      </div>
+      <pre class="code" id="modal-code"></pre>
+      <p class="hint-line">
+        改完点右上角<strong>「重载配置」</strong>，页面立刻生效，服务不用重启。
+      </p>
+    </div>
+  </div>
+</aside>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

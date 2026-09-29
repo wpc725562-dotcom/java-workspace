@@ -1,0 +1,243 @@
+{
+  "_readme": {
+    "用途": "工作台的项目清单。新增一个项目 = 在 projects 数组里加一个对象，刷新页面即可看到，不用改任何代码。",
+    "字段说明": {
+      "id": "唯一标识，同时用作日志文件名与 URL 路径，只用小写字母/数字/连字符",
+      "stage": "阶段号，显示在卡片左上角",
+      "name": "项目名（目录名）",
+      "title": "一句话标题",
+      "summary": "2-3 行简介，说明这个项目是干什么的、用了什么",
+      "category": "类别，取值必须是 categories 数组里的 id 之一",
+      "tags": "自由标签，任意字符串数组",
+      "origin": "★ 来源诚实标注，见 origin 字段内部说明。原创与克隆必须区分，不许含糊",
+      "path": "相对工作区根的路径（目录不存在时卡片会显示「目录缺失」）",
+      "openUrl": "「打开」按钮跳转的地址。只在项目运行中才显示该按钮。不填就不显示",
+      "openLabel": "「打开」按钮的 tooltip 说明，写清这个地址是什么（接口文档？前端页面？）",
+      "ports": "这个项目占用的端口，第一项视为主端口。标 \"optional\": true 的端口不参与「算不算起来了」的判定，但没起来时会在卡片上明确报出来（P2 有 7 个模块、依赖各不相同，全靠它区分「全起来了」和「起了一半」）",
+      "stack": "技术栈字符串数组，直接显示在卡片上",
+      "docs": "相关文档，key 是显示文字，value 是相对工作区根的路径或 http(s) 链接",
+      "launch": "一键启动的声明。type=none 表示暂不支持启动（计划中或未构建）",
+      "middleware": "启动前需要的中间件 id 列表（见本文件底部的 middleware 数组）"
+    },
+    "launch字段说明": {
+      "type": "jar（用 java -jar 起）| script（调工作区里的 .sh）| none",
+      "jdk": "jar 类型必填。取值 8 / 17 / 21，对应 use-jdk.sh 的注册表",
+      "cwd": "工作目录，相对工作区根",
+      "jar": "jar 类型必填。相对 cwd 的 jar 路径",
+      "args": "额外命令行参数（建议把端口显式写死，避免和 yml 里的默认值漂移）",
+      "script": "script 类型必填。相对工作区根的脚本名",
+      "startArgs": "script 类型的启动参数",
+      "stopArgs": "script 类型的停止参数",
+      "strictMiddleware": "默认 true。true = 缺中间件就拒绝启动（应用离了数据库确实起不来）；false = 只警告、照常启动（P2 这种多模块项目，能起几个是几个）",
+      "logFile": "日志文件名，落在工作区 logs/ 目录下",
+      "logGlob": "可选。日志分散在多个文件时用它（P2 的每个模块各写一份 logs/p2-*.log，p2.sh 自己只输出一张状态表）。填了它抽屉里会把匹配到的文件各取末尾若干行拼起来",
+      "readyTimeoutSec": "等端口就绪的上限秒数"
+    },
+    "为什么 origin 是必填": "本工作区里 P0/P1/P2 是上游开源仓库的浅克隆，P4 是自己手写的。把克隆当原创讲是就活作品集的硬伤，所以清单里必须写清楚，界面上也要一眼能看出来。"
+  },
+
+  "workspace": "D:\\java-workspace",
+  "dashboard": {
+    "port": 8990,
+    "title": "Java Workspace 工作台",
+    "subtitle": "P0–P4 项目集中查看与启停"
+  },
+
+  "categories": [
+    { "id": "backend", "label": "后台管理", "desc": "单体后台管理系统" },
+    { "id": "ai", "label": "AI 应用", "desc": "大模型应用与 Agent" },
+    { "id": "microservice", "label": "微服务", "desc": "Spring Cloud 微服务集群" },
+    { "id": "concurrency", "label": "高并发", "desc": "限流削峰与数据一致性" },
+    { "id": "api", "label": "业务 API", "desc": "面向业务的 REST 接口服务" }
+  ],
+
+  "origins": [
+    { "id": "original", "label": "本工作区原创", "short": "原创" },
+    { "id": "clone", "label": "上游开源克隆（学习用）", "short": "克隆学习" },
+    { "id": "planned", "label": "计划中，尚无代码", "short": "计划中" }
+  ],
+
+  "projects": [
+    {
+      "id": "p0-eladmin-mp",
+      "stage": "P0",
+      "name": "eladmin-mp",
+      "title": "单体后台管理系统",
+      "summary": "Spring Boot 2.x 时代的典型后台管理系统：RBAC 权限、代码生成器、操作日志、定时任务、在线用户。用来吃透「一个后台管理系统到底有哪些模块」，也是本工作区唯一一个 javax 命名空间的项目。",
+      "category": "backend",
+      "tags": ["单体", "RBAC", "MyBatis-Plus", "javax", "Spring Boot 2.7", "Java 8"],
+      "origin": {
+        "kind": "clone",
+        "repo": "https://github.com/elunez/eladmin-mp",
+        "note": "上游浅克隆。本工作区只提供启动手册、配置修复和登录验证脚本，源码不是自己写的。"
+      },
+      "openUrl": "http://127.0.0.1:8000/",
+      "openLabel": "后端根路径（前端是独立仓库，不在本工作区）",
+      "path": "p0-eladmin-mp",
+      "ports": [{ "port": 8000, "label": "HTTP" }],
+      "stack": ["Java 8", "Spring Boot 2.7.18", "MyBatis-Plus 3.5.3", "Druid", "MySQL 5.7", "Redis", "javax.*"],
+      "docs": {
+        "启动手册": "docs/run-p0.md",
+        "JDK 说明": "docs/jdk-matrix.md"
+      },
+      "middleware": ["mysql57", "redis"],
+      "launch": {
+        "type": "jar",
+        "jdk": "8",
+        "cwd": "p0-eladmin-mp/eladmin",
+        "jar": "eladmin-system/target/eladmin-system-1.1.jar",
+        "args": ["--server.port=8000"],
+        "logFile": "dashboard-p0.log",
+        "readyTimeoutSec": 120
+      }
+    },
+
+    {
+      "id": "p1-yu-ai-agent",
+      "stage": "P1",
+      "name": "yu-ai-agent",
+      "title": "AI 应用开发（对话 / 流式 / Agent）",
+      "summary": "大模型应用的标准三件套：同步对话、SSE 流式输出、Agent 工具调用，外加 RAG 与 MCP 客户端。默认走本地 Ollama，所以不需要任何 API key 就能跑通全链路。",
+      "category": "ai",
+      "tags": ["Spring AI", "Ollama", "SSE", "Agent", "RAG", "MCP", "Java 21", "Spring Boot 3.4"],
+      "origin": {
+        "kind": "clone",
+        "repo": "https://github.com/liyupi/yu-ai-agent",
+        "note": "上游浅克隆。本工作区提供的是启动手册、本地 Ollama 离线化方案和 24 项 E2E 验证。"
+      },
+      "openUrl": "http://127.0.0.1:8123/api/doc.html",
+      "openLabel": "Knife4j 接口文档",
+      "path": "p1-yu-ai-agent",
+      "ports": [{ "port": 8123, "label": "HTTP（context-path /api）" }],
+      "stack": ["Java 21", "Spring Boot 3.4.4", "Spring AI 1.0.0", "Spring AI Alibaba", "Ollama / DashScope", "PgVector", "MCP", "Knife4j", "jakarta.*"],
+      "docs": {
+        "启动手册": "docs/run-p1.md"
+      },
+      "middleware": ["mysql8", "redis", "ollama"],
+      "launch": {
+        "type": "jar",
+        "jdk": "21",
+        "cwd": "p1-yu-ai-agent",
+        "jar": "target/yu-ai-agent-0.0.1-SNAPSHOT.jar",
+        "args": ["--server.port=8123"],
+        "logFile": "dashboard-p1.log",
+        "readyTimeoutSec": 120
+      }
+    },
+
+    {
+      "id": "p2-mall-swarm",
+      "stage": "P2",
+      "name": "mall-swarm",
+      "title": "微服务电商（7 个可运行模块）",
+      "summary": "一套完整的 Spring Cloud 微服务电商：网关、认证中心、管理后台、用户端、搜索、监控。配套 Nacos 注册/配置中心、MongoDB、Elasticsearch、RabbitMQ、MinIO —— 本工作区 8 个中间件里 6 个是为它准备的。",
+      "category": "microservice",
+      "tags": ["微服务", "Spring Cloud", "Nacos", "Gateway", "OpenFeign", "RabbitMQ", "Elasticsearch", "MongoDB", "MinIO", "Java 17", "Spring Boot 3.5"],
+      "origin": {
+        "kind": "clone",
+        "repo": "https://github.com/macrozheng/mall-swarm",
+        "note": "上游浅克隆。本工作区提供的是启动手册、配置批量修复、Nacos 配置发布脚本和全链路 E2E 验证。"
+      },
+      "openUrl": "http://127.0.0.1:8201/",
+      "openLabel": "网关入口",
+      "path": "p2-mall-swarm",
+      "ports": [
+        { "port": 8201, "label": "gateway 入口网关" },
+        { "port": 8080, "label": "mall-admin 管理后台" },
+        { "port": 8401, "label": "mall-auth 认证中心" },
+        { "port": 8085, "label": "mall-portal 用户端", "optional": true, "why": "起得慢（实测比必需端口晚约 60 秒，要等 Nacos 配置拉完才起 Tomcat）" },
+        { "port": 8081, "label": "mall-search 搜索" },
+        { "port": 8082, "label": "mall-demo 演示", "optional": true, "why": "演示模块，起得慢，不影响主链路" },
+        { "port": 8101, "label": "mall-monitor 监控", "optional": true, "why": "监控台，可选" }
+      ],
+      "stack": ["Java 17", "Spring Boot 3.5.14", "Spring Cloud Alibaba", "Nacos 3.0.3", "OpenFeign", "MyBatis", "Redis", "MongoDB 7", "Elasticsearch 8", "RabbitMQ 4", "MinIO", "jakarta.*"],
+      "docs": {
+        "启动手册": "docs/run-p2.md"
+      },
+      "middleware": ["mysql8", "redis", "nacos", "mongodb", "elasticsearch", "rabbitmq", "minio"],
+      "launch": {
+        "type": "script",
+        "strictMiddleware": false,
+        "script": "p2.sh",
+        "startArgs": ["start"],
+        "stopArgs": ["stop"],
+        "logFile": "dashboard-p2.log",
+        "logGlob": "logs/p2-*.log",
+        "readyTimeoutSec": 180
+      }
+    },
+
+    {
+      "id": "p3-seckill",
+      "stage": "P3",
+      "name": "seckill",
+      "title": "秒杀：库存原子扣减与限流削峰",
+      "summary": "有意留空的阶段。计划里 P3 的产出不是「第四个练手项目」，而是一份「三个开源实现的方案对比 + 我的选择及理由」，核心链路自己写。目录里目前只有一份说明，写清了为什么现在不预先克隆。",
+      "category": "concurrency",
+      "tags": ["计划中", "秒杀", "防超卖", "限流", "分布式锁", "方案对比"],
+      "origin": {
+        "kind": "planned",
+        "repo": null,
+        "note": "尚无代码。不是遗漏，是有意的 —— 详见目录内的说明文档。"
+      },
+      "path": "p3-seckill",
+      "ports": [],
+      "stack": ["待定（预计 Java 17 / Spring Boot 3.x / Redis / 消息队列）"],
+      "docs": {
+        "为什么先空着": "p3-seckill/README-为何先空着.md"
+      },
+      "middleware": [],
+      "launch": {
+        "type": "none",
+        "reason": "这个阶段还没有代码 —— 不是没构建，是本来就没克隆。目录里只有一份「为什么先空着」的说明。"
+      }
+    },
+
+    {
+      "id": "p4-exam-tracker",
+      "stage": "P4",
+      "name": "exam-tracker",
+      "title": "备考任务追踪 API",
+      "summary": "本工作区唯一原创的项目，也是唯一一个单独发了 GitHub 仓库的。任务 CRUD、打卡、统计（连续天数 / 考试倒计时 / 时间窗口折算）、JWT 鉴权、多用户数据隔离，另外带一层可选的 AI 问答（自然语言查自己的学习数据）。",
+      "category": "api",
+      "tags": ["原创", "REST API", "JWT", "MySQL", "Spring Boot 3.5", "Spring AI", "Java 17", "集成测试", "CI"],
+      "origin": {
+        "kind": "original",
+        "repo": "https://github.com/wpc725562-dotcom/exam-tracker",
+        "note": "★ 手写原创。50 个主源文件 + 23 个测试文件，309 个单元测试、35 个集成测试、86 项端到端断言，GitHub Actions 全绿。"
+      },
+      "openUrl": "http://127.0.0.1:8090/api/",
+      "openLabel": "前端页面",
+      "path": "p4-exam-tracker",
+      "ports": [{ "port": 8090, "label": "HTTP（context-path /api）" }],
+      "stack": ["Java 17", "Spring Boot 3.5", "Spring Security + JWT", "Spring Data JPA", "MySQL 8", "Spring AI（可选）", "JUnit 5 + Mockito", "GitHub Actions"],
+      "docs": {
+        "项目 README": "p4-exam-tracker/README.md",
+        "AI 层方案": "p4-exam-tracker/docs/ai-layer-plan.md",
+        "GitHub 仓库": "https://github.com/wpc725562-dotcom/exam-tracker"
+      },
+      "middleware": ["mysql8"],
+      "launch": {
+        "type": "jar",
+        "jdk": "17",
+        "cwd": "p4-exam-tracker",
+        "jar": "target/exam-tracker-1.0.0.jar",
+        "args": ["--server.port=8090"],
+        "logFile": "dashboard-p4.log",
+        "readyTimeoutSec": 120
+      }
+    }
+  ],
+
+  "middleware": [
+    { "id": "mysql57", "name": "MySQL 5.7", "version": "5.7.44", "port": 3307, "svc": "mysql57", "processHint": ["mysqld"], "note": "P0 专用（8.0 的保留字会和老 SQL 冲突）" },
+    { "id": "mysql8", "name": "MySQL 8.0", "version": "8.0.43", "port": 3308, "svc": "mysql8", "processHint": ["mysqld"], "note": "P1 / P2 / P3 / P4 共用，按 schema 隔离" },
+    { "id": "redis", "name": "Redis", "version": "8.10.2", "port": 6380, "svc": "redis", "processHint": ["redis-server"], "note": "按 DB 号隔离" },
+    { "id": "nacos", "name": "Nacos", "version": "3.0.3", "port": 8848, "extraPorts": [8849, 9848], "svc": "nacos", "processHint": ["java"], "note": "控制台在 8849，不是 8848/nacos" },
+    { "id": "mongodb", "name": "MongoDB", "version": "7.0.14", "port": 27017, "svc": "mongodb", "processHint": ["mongod"], "note": "mall-portal 用" },
+    { "id": "elasticsearch", "name": "Elasticsearch", "version": "8.18.8", "port": 9200, "extraPorts": [9300], "svc": "elasticsearch", "processHint": ["java"], "note": "必须是 8.x，客户端有版本校验" },
+    { "id": "rabbitmq", "name": "RabbitMQ", "version": "4.3.6", "port": 5672, "extraPorts": [15672, 25672, 4369], "svc": "rabbitmq", "processHint": ["erl", "beam", "rabbitmq"], "note": "vhost /mall；4369 是 Erlang epmd，别误判成占用。⚠ 实测这个端口会被 WorkBuddyAI.exe 抢，工作台会标成「被占用」" },
+    { "id": "minio", "name": "MinIO", "version": "latest", "port": 9000, "extraPorts": [9001], "svc": "minio", "processHint": ["minio"], "note": "bucket mall" },
+    { "id": "ollama", "name": "Ollama", "version": "0.34.4", "port": 11434, "svc": null, "launcher": "run-ollama.cmd", "processHint": ["ollama"], "note": "P1 的本地大模型，免 API key。不走 svc.sh，由 run-ollama.cmd 前台启动（工作台会代启并落日志）。P1 启动时就会调它做向量化，所以它必须先起来" }
+  ]
+}
