@@ -35,7 +35,7 @@
 >
 > **本工作区自己写的工具**：**[dashboard/](dashboard/)** —— 项目工作台。
 > 一个页面看完 P0–P4 的状态，能筛选能搜索，能真的把项目起起来。
-> 零第三方依赖（标准库 `http.server` + 原生 JS），63 项浏览器断言全通过。
+> 零第三方依赖（标准库 `http.server` + 原生 JS），65 项浏览器断言全通过。
 
 ---
 
@@ -132,11 +132,11 @@ java-workspace\
 │   └── run-p2.md                ← P2 mall-swarm 启动手册
 │
 ├── dashboard\                   ← ★ 本工作区自研：项目工作台（见第 10 节）
-│   ├── README.md                ← 用法 + 加新项目 + 设计上踩过的 13 个坑
+│   ├── README.md                ← 用法 + 加新项目 + 设计上踩过的 14 个坑
 │   ├── projects.json            ← 声明式项目清单：加项目只改这个文件
 │   ├── server.py                ← 零依赖本地服务（标准库 http.server）
 │   ├── start.cmd / stop.cmd     ← 一键启动 / 按端口停止（纯 ASCII + CRLF）
-│   ├── verify-ui.js             ← 真浏览器 63 项界面断言 + 三断点截图
+│   ├── verify-ui.js             ← 真浏览器 65 项界面断言 + 三断点截图
 │   └── web\                     ← index.html / style.css / app.js（无框架无构建）
 │
 ├── tools\                       ← 验证与自动化工具（Python）
@@ -430,7 +430,7 @@ python dashboard/server.py        # 打开 http://127.0.0.1:8990/
 | P2 mall-swarm | 166s | 含自动拉起 5 个中间件，7 个模块全部就绪 |
 | P3 seckill | — | 拒绝启动并说明原因（还没有代码） |
 
-界面验证：`dashboard/verify-ui.js`，真浏览器 **63 项断言全通过**，
+界面验证：`dashboard/verify-ui.js`，真浏览器 **65 项断言全通过**，
 输出桌面/平板/手机/深色四档截图到 `docs/screenshots/`。
 
 ### ⚠️ 两个必须知道的环境冲突

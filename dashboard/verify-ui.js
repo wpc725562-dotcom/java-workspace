@@ -46,6 +46,42 @@ function ok(name, cond, detail) {
 }
 function section(t) { console.log(`\n${t}`); }
 
+// ★ 有些断言**必须**先有前置条件（典型：某个项目得正在运行，否则「打开」按钮根本不存在）。
+//   这种情况既不能算通过（没验过），也不能算失败（代码没毛病）——
+//   原来这里是直接 `ok(..., false)`，于是「套件跑成什么样」取决于
+//   「此刻恰好有没有项目在跑」，一条真的界面 bug 就混在这种噪声里过去了。
+//   所以单独记一类 skip，并且**在汇总里显式报出来**，别让它悄悄消失。
+let skipped = 0;
+const skips = [];
+function skip(name, why) {
+  skipped++; skips.push(name);
+  console.log(`  [SKIP] ${name}  ← ${why}`);
+}
+
+// ★ 判断元素「是不是真的看得见」—— 必须验渲染结果，不能验 el.hidden。
+//   实测踩过：`.offline { display: flex }` 是作者样式，会盖掉 UA 样式表里的
+//   `[hidden] { display: none }`（作者样式优先于 UA，与权重无关），
+//   于是横幅在后端完全健康时也常驻在页面顶部。
+//   而 `el.hidden` 的值**一直是对的** —— 只验它就完全抓不到这个 bug。
+//   判据：computed display/visibility + 真的有盒子（getClientRects 非空，
+//   这个同时排除了「祖先 display:none」和「尺寸为 0」两种看不见）。
+const VISIBLE_SRC = sel => `(() => {
+  const el = document.querySelector(${JSON.stringify(sel)});
+  if (!el) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  return el.getClientRects().length > 0;
+})()`;
+async function visible(page, sel) {
+  return page.evaluate(VISIBLE_SRC(sel)).catch(() => false);
+}
+async function waitVisible(page, sel, timeoutMs, label) {
+  return waitFor(page, VISIBLE_SRC(sel), timeoutMs, label);
+}
+async function waitHidden(page, sel, timeoutMs, label) {
+  return waitFor(page, `!${VISIBLE_SRC(sel)}`, timeoutMs, label);
+}
+
 // 等某个条件成立。★ 第三个参数必须写 null —— 写成 {timeout:N} 会被当成
 // waitForFunction 的 arg 参数吃掉，实际用默认 30 秒，超时了还看不出原因。
 async function waitFor(page, fn, timeoutMs, label) {
@@ -93,6 +129,26 @@ async function waitFor(page, fn, timeoutMs, label) {
   const resultLine = await page.innerText('#result-line');
   ok('结果行显示总数与运行数', /共\s*5\s*个项目/.test(resultLine) && /个在运行/.test(resultLine), resultLine);
 
+  // ★ 这条是补的，而且它是一条真 bug 的回归测试。
+  //   后端健康时横幅**必须真的看不见**。原来这里只验了 `#offline` 的 hidden 属性，
+  //   而 `.offline { display: flex }` 把 UA 的 `[hidden] { display: none }` 盖掉了 ——
+  //   hidden 属性一直是对的，横幅却一直挂在页面顶上，用户第一眼就是一条假警报。
+  //   所以这里验的是「渲染出来看不见」（见 VISIBLE_JS），不是属性值。
+  ok('后端健康时不出现断线横幅（验的是真的看不见，不是 hidden 属性）',
+    !(await visible(page, '#offline')),
+    { hiddenAttr: await page.evaluate(() => document.querySelector('#offline').hidden) });
+
+  // ★ 通用兜底：页面上任何带 hidden 属性的元素都不该真的渲染出来。
+  //   一条断言覆盖整类问题，以后新增元素也不会再犯同样的错。
+  const leaked = await page.evaluate(() =>
+    [...document.querySelectorAll('[hidden]')]
+      .filter(el => {
+        const cs = getComputedStyle(el);
+        return cs.display !== 'none' && cs.visibility !== 'hidden' && el.getClientRects().length > 0;
+      })
+      .map(el => el.id || (el.className && String(el.className)) || el.tagName));
+  ok('没有任何「带 hidden 属性却仍然可见」的元素', leaked.length === 0, leaked);
+
   // ------------------------------------------------------------ 卡片内容 --
   section('二、卡片关键信息（名称/简介/技术栈/状态/来源）');
   const first = page.locator('.card').first();
@@ -132,10 +188,19 @@ async function waitFor(page, fn, timeoutMs, label) {
 
   // -------------------------------------------------------------- 筛选 --
   section('四、按状态 / 类别 / 来源 / 标签筛选');
+  // ★ 先在「全部」下数出真实运行中的数量，再切到「运行中」比对。
+  //   原来这里写的是 `runningN >= 1` —— 断言名字说的是「筛出来的卡片都是 running」，
+  //   条件却在验「此刻至少有一个项目在跑」，那是**环境状态**，不是界面行为。
+  //   结果：没项目在跑时它必红，一条真的筛选 bug 反而会被这种噪声淹没。
+  await page.locator('#chips-state .chip', { hasText: '全部' }).first().click();
+  await page.waitForTimeout(320);
+  const expectRunning = await page.locator('.card').evaluateAll(
+    els => els.filter(e => e.dataset.state === 'running').length);
   await page.locator('#chips-state .chip', { hasText: '运行中' }).first().click();
   await page.waitForTimeout(320);
   const runningN = await page.locator('.card').count();
-  ok('筛「运行中」得到的卡片都是 running', runningN >= 1, { runningN });
+  ok('筛「运行中」的卡片数 = 全量里 state=running 的数量',
+    runningN === expectRunning, { runningN, expectRunning });
   const allRunning = await page.locator('.card').evaluateAll(els => els.every(e => e.dataset.state === 'running'));
   ok('筛选结果状态一致', allRunning);
 
@@ -197,6 +262,7 @@ async function waitFor(page, fn, timeoutMs, label) {
     ok('「打开」按钮绑定到正确项目', openUrl === 'p4-exam-tracker');
   } else {
     ok('未运行的项目显示「启动」按钮', actText.includes('启动'), actText);
+    skip('运行中项目的「打开 / 停止」按钮', 'P4 当前是 stopped，按钮验不到');
   }
   ok('每张卡片都有「详情」按钮', (await page.locator('button[data-act="detail"]').count()) === 5);
 
@@ -212,7 +278,11 @@ async function waitFor(page, fn, timeoutMs, label) {
     const h = await popup.title().catch(() => '');
     ok('打开的页面确实是 exam-tracker 前端', /备考|任务/.test(h) || h.length > 0, h);
     await popup.close();
+  } else if (p4State !== 'running') {
+    // P4 没在跑 → 没有「打开」按钮 → 这条根本无从验起。算 skip，不算 fail。
+    skip('「打开」跳转地址与落地页', 'P4 未在运行；想验这条就先把它起起来再跑一遍');
   } else {
+    // P4 明明在跑却弹不出来 —— 这才是真的失败。
     ok('「打开」能弹出新窗口', false, '没有捕获到 popup');
   }
 
@@ -314,9 +384,8 @@ async function waitFor(page, fn, timeoutMs, label) {
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.route(/\/api\//, route => route.abort());
   await page.click('#btn-refresh');                       // 触发一次必然失败的请求
-  const bannerUp = await waitFor(page,
-    () => !document.querySelector('#offline').hidden, 6000, '断线横幅出现');
-  ok('服务断开后挂出常驻横幅', bannerUp);
+  const bannerUp = await waitVisible(page, '#offline', 6000, '断线横幅出现');
+  ok('服务断开后挂出常驻横幅（且真的渲染出来了）', bannerUp);
 
   const offText = await page.innerText('#offline').catch(() => '');
   ok('横幅点明是「工作台服务」连不上，而不是项目起不来',
@@ -335,15 +404,18 @@ async function waitFor(page, fn, timeoutMs, label) {
 
   await page.unroute(/\/api\//);
   await page.click('#btn-offline-retry');
-  const bannerDown = await waitFor(page,
-    () => document.querySelector('#offline').hidden, 8000, '恢复后横幅收起');
-  ok('服务恢复后横幅自动收起', bannerDown);
+  const bannerDown = await waitHidden(page, '#offline', 8000, '恢复后横幅收起');
+  ok('服务恢复后横幅自动收起（同样验的是真的看不见）', bannerDown);
   const onEnabled = await page.locator('.card button[data-act="start"]:not([disabled])').count();
   ok('服务恢复后启停按钮重新可用', onEnabled >= 1, { onEnabled });
 
   // -------------------------------------------------------------- 汇总 --
   console.log('\n' + '─'.repeat(62));
-  console.log(`  通过 ${pass} 项，失败 ${fail} 项`);
+  console.log(`  通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
+  if (skipped) {
+    console.log('  跳过项（前置条件不具备，未验过 —— 不是通过）：');
+    skips.forEach(s => console.log('    · ' + s));
+  }
   if (fail) {
     console.log('  失败项：');
     failures.forEach(f => console.log('    · ' + f));

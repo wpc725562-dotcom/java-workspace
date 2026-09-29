@@ -50,7 +50,7 @@ dashboard/
 │   ├── index.html
 │   ├── style.css     深浅色 + 响应式，无 CSS 框架
 │   └── app.js        无框架、无构建步骤
-├── verify-ui.js      用真浏览器跑 63 项界面断言
+├── verify-ui.js      用真浏览器跑 65 项界面断言
 ├── start.cmd         一键启动：找 Python / 起服务 / 落日志 / 已运行就只开浏览器
 └── stop.cmd          按端口停止，幂等
 ```
@@ -153,7 +153,7 @@ dashboard/
 ## 5. 验证
 
 ```bash
-# 界面（真浏览器，63 项断言，含三个断点的响应式截图）
+# 界面（真浏览器，65 项断言，含三个断点的响应式截图）
 NODE_PATH="C:/Users/Administrator/.workbuddy-ai/binaries/node/workspace/node_modules" \
   "C:/Users/Administrator/.workbuddy-ai/binaries/node/versions/22.22.2-3/node.exe" \
   dashboard/verify-ui.js
@@ -176,7 +176,7 @@ NODE_PATH="C:/Users/Administrator/.workbuddy-ai/binaries/node/workspace/node_mod
 
 ---
 
-## 6. 设计上踩过的坑（13 条，都不是猜的）
+## 6. 设计上踩过的坑（14 条，都不是猜的）
 
 > **6.9–6.12 是同一批发现的，值得单独说一句。**
 > 它们只在**从普通 Windows 命令行启动**时才出现：WorkBuddy 的 bash 会注入
@@ -409,6 +409,54 @@ await page.click('#btn-offline-retry');
 
 **注意把它放在「页面没有 JS 报错」那条断言之后**：fetch 失败会在控制台留一条 error，
 放前面会把那条断言弄脏。
+
+### 6.14 作者样式的 `display` 会让 `hidden` 属性彻底失效 ★
+
+**这是 6.13 那个断线横幅自己带出来的 bug，而且已经发出去过一版。**
+
+`.offline` 为了横向排列写了 `display: flex`。而 UA 样式表里虽然确实有
+`[hidden] { display: none }`，**作者样式一律优先于 UA 样式，跟选择器权重无关** ——
+于是 `hidden` 属性被无声地盖掉，那条「连不上工作台服务」的红色横幅
+**在后端完全健康时也常驻在页面顶部**。用户打开页面第一眼看到的是一条假警报。
+
+最阴的地方是**它不会被 DOM 断言抓到**：
+
+```js
+// ✗ 这样验永远抓不到 —— el.hidden 的值一直是 true，坏的只有渲染结果
+ok('横幅是隐藏的', await page.evaluate(() => document.querySelector('#offline').hidden));
+
+// ✓ 要验「真的看不见」：computed display/visibility + 真的有盒子
+const visible = sel => `(() => {
+  const el = document.querySelector(${JSON.stringify(sel)});
+  if (!el) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  return el.getClientRects().length > 0;   // 同时排除「祖先 display:none」和「尺寸为 0」
+})()`;
+```
+
+`getClientRects().length > 0` 是关键 —— 它同时排除了「自己 `display:none`」
+和「祖先 `display:none`」两种看不见，比只看 `offsetParent` 可靠
+（`offsetParent` 对 `position: fixed` 的元素恒为 `null`）。
+
+修法是两条，缺一不可：
+
+1. **CSS 里自己兜住**，别指望浏览器：
+   ```css
+   [hidden] { display: none !important; }
+   ```
+   放在基础重置区。一条规则盖住整类问题，以后新增元素也不会再犯。
+2. **断言改验渲染结果**，并且加一条**通用兜底**：
+   ```js
+   // 页面上任何带 hidden 属性的元素都不该真的渲染出来
+   [...document.querySelectorAll('[hidden]')].filter(el => {
+     const cs = getComputedStyle(el);
+     return cs.display !== 'none' && cs.visibility !== 'hidden' && el.getClientRects().length > 0;
+   })
+   ```
+
+> **教训**：「状态变量是对的」和「用户看到的是对的」是两件事。
+> 只验前者，就会得到一套全绿但页面明显有问题的断言 —— 这一版就是这么发出去的。
 
 ---
 

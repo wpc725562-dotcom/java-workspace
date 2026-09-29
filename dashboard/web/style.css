@@ -93,6 +93,17 @@ html[data-theme="dark"] {
 
 * { box-sizing: border-box; }
 
+/* ★ [hidden] 必须自己兜住，不能指望浏览器。
+   UA 样式表里确实有 `[hidden] { display: none }`，但**作者样式一律优先于 UA 样式**，
+   跟选择器权重无关。所以只要给某个元素写了 `display: flex`，
+   那个元素上的 hidden 属性就彻底失效 —— 页面永远显示它。
+   实测踩过：`.offline { display: flex }` 让「连不上工作台服务」的红色横幅
+   在后端完全健康时也常驻在页面顶部，用户第一眼看到的就是一条假警报。
+   最阴的是它**不会被 DOM 断言抓到**：`el.hidden` 的值一直是对的，
+   坏的只有渲染结果。所以这里显式加 !important 兜住整类问题，
+   并且界面断言必须验「真的看不见」（offsetParent / 尺寸），不能只验 `.hidden`。 */
+[hidden] { display: none !important; }
+
 html, body { margin: 0; padding: 0; }
 
 body {
